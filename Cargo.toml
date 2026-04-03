@@ -1,0 +1,23 @@
+[package]
+name = "ovp-pipeline"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tokio = { version = "1", features = ["rt", "macros"] }
+thiserror = "2"
+reqwest = { version = "0.12", default-features = false, features = ["json", "multipart", "rustls-tls"], optional = true }
+rubato = { version = "0.16", optional = true }
+ort = { version = "2.0.0-rc.12", optional = true }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+uuid = { version = "1", features = ["v4", "serde"] }
+tracing = "0.1"
+async-trait = "0.1"
+
+[features]
+default = ["vad", "transcribe"]
+vad = ["dep:ort"]
+transcribe = ["dep:reqwest", "dep:rubato"]
+opus = []
+full = ["vad", "transcribe", "opus"]
