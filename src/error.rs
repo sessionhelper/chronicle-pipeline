@@ -6,10 +6,6 @@
 /// Errors that can occur during pipeline processing.
 #[derive(thiserror::Error, Debug)]
 pub enum PipelineError {
-    /// Failed to decode raw PCM bytes into f32 samples.
-    #[error("decode error: {0}")]
-    Decode(String),
-
     /// Failed to resample audio (e.g. 48kHz -> 16kHz).
     #[error("resample error: {0}")]
     Resample(String),

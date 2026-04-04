@@ -6,17 +6,19 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-/// A single speaker's raw audio track as provided by the caller.
+/// A single speaker's mono PCM audio stream.
+///
+/// The caller is responsible for byte decoding, stereo downmix, and
+/// any format conversion before constructing this. The pipeline
+/// receives mono f32 samples and a sample rate — nothing else.
 #[derive(Debug, Clone)]
 pub struct SpeakerTrack {
-    /// Opaque speaker identifier (e.g. "speaker_a").
+    /// Opaque speaker identifier.
     pub pseudo_id: String,
-    /// Raw PCM bytes: signed 16-bit little-endian.
-    pub pcm_data: Vec<u8>,
-    /// Sample rate of the input audio, typically 48000 Hz from Discord.
+    /// Mono f32 audio samples in [-1.0, 1.0] range.
+    pub samples: Vec<f32>,
+    /// Sample rate of these samples (e.g. 48000 from Discord).
     pub sample_rate: u32,
-    /// Number of audio channels, typically 2 (stereo) from Discord.
-    pub channels: u16,
 }
 
 /// Input to the pipeline: a session's worth of speaker tracks.
@@ -24,19 +26,8 @@ pub struct SpeakerTrack {
 pub struct SessionInput {
     /// Unique session identifier.
     pub session_id: Uuid,
-    /// Per-speaker audio tracks to process.
+    /// Per-speaker mono PCM streams to process.
     pub tracks: Vec<SpeakerTrack>,
-}
-
-/// Decoded mono f32 samples for a single speaker.
-#[derive(Debug, Clone)]
-pub struct SpeakerSamples {
-    /// Speaker identifier, carried forward from `SpeakerTrack`.
-    pub pseudo_id: String,
-    /// Mono f32 audio samples in [-1.0, 1.0] range.
-    pub samples: Vec<f32>,
-    /// Sample rate of these samples.
-    pub sample_rate: u32,
 }
 
 /// A contiguous region of detected speech within a speaker's audio.
@@ -64,6 +55,10 @@ pub struct AudioChunk {
     /// Absolute end time within the session, in seconds.
     pub original_end: f32,
 }
+
+// SpeakerTrack is used throughout the pipeline where SpeakerSamples
+// was previously used. This alias keeps internal code readable.
+pub type SpeakerSamples = SpeakerTrack;
 
 /// A single transcript segment produced by Whisper and processed by filters.
 #[derive(Debug, Clone, Serialize, Deserialize)]
