@@ -60,7 +60,7 @@ pub struct AudioChunk {
 // was previously used. This alias keeps internal code readable.
 pub type SpeakerSamples = SpeakerTrack;
 
-/// A single transcript segment produced by Whisper and processed by filters.
+/// A single transcript segment produced by Whisper and processed by operators.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TranscriptSegment {
     /// Unique segment identifier.
@@ -75,15 +75,15 @@ pub struct TranscriptSegment {
     pub start_time: f32,
     /// Absolute end time in seconds.
     pub end_time: f32,
-    /// Text after filter processing. May differ from `original_text`.
+    /// Text after operator processing. May differ from `original_text`.
     pub text: String,
     /// Immutable Whisper output, preserved for audit/debugging.
     pub original_text: String,
     /// Whisper confidence score, if available.
     pub confidence: Option<f32>,
-    /// Scene/chunk group assigned by the scene chunker filter.
+    /// Scene/chunk group assigned by the scene operator.
     pub chunk_group: Option<u32>,
-    /// Whether this segment was excluded by a filter.
+    /// Whether this segment was excluded by an operator.
     pub excluded: bool,
     /// Reason for exclusion, if excluded.
     pub exclude_reason: Option<String>,
@@ -94,9 +94,9 @@ pub struct TranscriptSegment {
 pub struct PipelineResult {
     /// All transcript segments (including excluded ones).
     pub segments: Vec<TranscriptSegment>,
-    /// Number of segments that passed filters.
+    /// Number of segments that passed operators.
     pub segments_produced: u32,
-    /// Number of segments excluded by filters.
+    /// Number of segments excluded by operators.
     pub segments_excluded: u32,
     /// Number of scenes detected by the scene chunker.
     pub scenes_detected: u32,

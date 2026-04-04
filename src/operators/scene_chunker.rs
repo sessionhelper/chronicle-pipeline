@@ -1,4 +1,4 @@
-//! Scene chunker: assigns `chunk_group` to segments based on silence
+//! Scene operator: assigns `chunk_group` to segments based on silence
 //! gaps and duration limits.
 //!
 //! A new scene starts when either:
@@ -8,18 +8,18 @@
 use crate::error::Result;
 use crate::types::TranscriptSegment;
 
-use super::{FilterResult, StreamFilter};
+use super::{OperatorResult, Operator};
 
 /// Configuration for scene boundary detection.
 #[derive(Debug, Clone)]
-pub struct SceneChunkerConfig {
+pub struct SceneOperatorConfig {
     /// Maximum silence gap in seconds before starting a new scene.
     pub max_silence_gap: f32,
     /// Maximum duration of a single scene in seconds.
     pub max_chunk_duration: f32,
 }
 
-impl Default for SceneChunkerConfig {
+impl Default for SceneOperatorConfig {
     fn default() -> Self {
         Self {
             max_silence_gap: 30.0,
@@ -28,10 +28,10 @@ impl Default for SceneChunkerConfig {
     }
 }
 
-/// Scene chunker filter. Assigns sequential `chunk_group` numbers to
+/// Scene operator. Assigns sequential `chunk_group` numbers to
 /// transcript segments for UI organization.
-pub struct SceneChunker {
-    config: SceneChunkerConfig,
+pub struct SceneOperator {
+    config: SceneOperatorConfig,
     /// Current scene index (0-based).
     current_group: u32,
     /// Start time of the current scene.
@@ -42,9 +42,9 @@ pub struct SceneChunker {
     scenes_created: u32,
 }
 
-impl SceneChunker {
-    /// Create a new scene chunker with the given configuration.
-    pub fn new(config: SceneChunkerConfig) -> Self {
+impl SceneOperator {
+    /// Create a new scene operator with the given configuration.
+    pub fn new(config: SceneOperatorConfig) -> Self {
         Self {
             config,
             current_group: 0,
@@ -81,11 +81,11 @@ impl SceneChunker {
 }
 
 #[async_trait::async_trait]
-impl StreamFilter for SceneChunker {
-    async fn on_segment(&mut self, segment: &mut TranscriptSegment) -> FilterResult {
+impl Operator for SceneOperator {
+    async fn on_segment(&mut self, segment: &mut TranscriptSegment) -> OperatorResult {
         // Skip excluded segments — they don't affect scene boundaries
         if segment.excluded {
-            return FilterResult::Pass;
+            return OperatorResult::Pass;
         }
 
         if self.scene_start.is_none() {
@@ -108,24 +108,24 @@ impl StreamFilter for SceneChunker {
         segment.chunk_group = Some(self.current_group);
         self.last_end = Some(segment.end_time);
 
-        FilterResult::Pass
+        OperatorResult::Pass
     }
 
     async fn sweep(&mut self) -> Result<u32> {
-        // Scene chunker doesn't do retroactive analysis
+        // Scene operator doesn't do retroactive analysis
         Ok(0)
     }
 
     async fn finalize(&mut self) -> Result<()> {
         tracing::info!(
             scenes = self.scenes_created,
-            "scene chunker finalized"
+            "scene operator finalized"
         );
         Ok(())
     }
 }
 
-impl SceneChunker {
+impl SceneOperator {
     /// Return the total number of scenes detected so far.
     pub fn scenes_detected(&self) -> u32 {
         self.scenes_created
@@ -156,7 +156,7 @@ mod tests {
 
     #[tokio::test]
     async fn assigns_same_group_for_close_segments() {
-        let mut chunker = SceneChunker::new(SceneChunkerConfig::default());
+        let mut chunker = SceneOperator::new(SceneOperatorConfig::default());
 
         let mut s1 = make_segment(0.0, 5.0);
         let mut s2 = make_segment(6.0, 10.0);
@@ -173,11 +173,11 @@ mod tests {
 
     #[tokio::test]
     async fn splits_on_silence_gap() {
-        let config = SceneChunkerConfig {
+        let config = SceneOperatorConfig {
             max_silence_gap: 10.0,
             max_chunk_duration: 600.0,
         };
-        let mut chunker = SceneChunker::new(config);
+        let mut chunker = SceneOperator::new(config);
 
         let mut s1 = make_segment(0.0, 5.0);
         let mut s2 = make_segment(20.0, 25.0); // 15s gap > 10s threshold
@@ -192,11 +192,11 @@ mod tests {
 
     #[tokio::test]
     async fn splits_on_duration_limit() {
-        let config = SceneChunkerConfig {
+        let config = SceneOperatorConfig {
             max_silence_gap: 30.0,
             max_chunk_duration: 100.0,
         };
-        let mut chunker = SceneChunker::new(config);
+        let mut chunker = SceneOperator::new(config);
 
         let mut s1 = make_segment(0.0, 50.0);
         let mut s2 = make_segment(51.0, 90.0);

@@ -18,8 +18,8 @@ pub enum PipelineError {
     #[error("transcription error: {0}")]
     Transcribe(String),
 
-    /// Filter stage error.
-    #[error("filter error: {0}")]
+    /// Operator stage error.
+    #[error("operator error: {0}")]
     Filter(String),
 
     /// HTTP request failed (feature-gated behind `transcribe`).

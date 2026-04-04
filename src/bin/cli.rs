@@ -22,7 +22,7 @@ use symphonia_core::probe::Hint;
 use uuid::Uuid;
 
 use ovp_pipeline::{
-    default_filters, process_session, PipelineConfig, SessionInput, SpeakerTrack, TranscriberConfig,
+    default_operators, process_session, PipelineConfig, SessionInput, SpeakerTrack, TranscriberConfig,
     VadConfig,
 };
 
@@ -515,10 +515,10 @@ fn cmd_run(session_dir: &Path, whisper_url: &str, model: &str, vad_model: &Path,
         tracks,
     };
 
-    let mut filters = default_filters();
+    let mut operators = default_operators();
 
     let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
-    let result = rt.block_on(async { process_session(&config, input, &mut filters).await });
+    let result = rt.block_on(async { process_session(&config, input, &mut operators).await });
 
     match result {
         Ok(result) => {

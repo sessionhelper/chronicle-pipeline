@@ -2,7 +2,7 @@
 //!
 //! Pure audio processing library. Takes raw PCM audio bytes per speaker,
 //! runs VAD, sends audio to an external Whisper HTTP endpoint for
-//! transcription, applies filters (hallucination detection + scene
+//! transcription, applies operators (hallucination detection + scene
 //! chunking), and returns structured transcript segments.
 //!
 //! **No I/O except HTTP to Whisper.** No S3, no Postgres, no file system.
@@ -11,7 +11,7 @@
 pub mod ad;
 pub mod audio;
 pub mod error;
-pub mod filters;
+pub mod operators;
 pub mod pipeline;
 pub mod transcribe;
 pub mod types;
@@ -19,7 +19,7 @@ pub mod vad;
 
 // Re-export the main public API at the crate root for convenience.
 pub use error::{PipelineError, Result};
-pub use filters::{default_filters, FilterResult, StreamFilter};
+pub use operators::{default_operators, OperatorResult, Operator};
 pub use pipeline::{process_session, PipelineConfig};
 pub use transcribe::TranscriberConfig;
 pub use types::*;

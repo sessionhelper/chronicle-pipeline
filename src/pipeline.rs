@@ -1,7 +1,7 @@
 //! Pipeline orchestration.
 //!
 //! Chains streaming stages: resample → RMS audio detection →
-//! Silero VAD → Whisper transcription → filters. Input is mono f32
+//! Silero VAD → Whisper transcription → operators. Input is mono f32
 //! samples per speaker — byte decoding and downmix are the caller's
 //! responsibility.
 
@@ -10,7 +10,7 @@ use std::time::Instant;
 use crate::ad::{self, RmsConfig};
 use crate::audio::resample;
 use crate::error::Result;
-use crate::filters::{self, StreamFilter};
+use crate::operators::{self, Operator};
 use crate::transcribe::{self, TranscriberConfig};
 use crate::types::{PipelineResult, SessionInput};
 use crate::vad::{self, VadConfig};
@@ -49,12 +49,12 @@ impl Default for PipelineConfig {
 ///
 /// Audio flows through: resample (to 16kHz) → RMS audio detection
 /// (silence removed) → Silero VAD (non-speech removed) → Whisper
-/// (speech → text) → filters (hallucination detection, scene chunking).
+/// (speech → text) → operators (hallucination detection, scene chunking).
 /// Input is already mono f32 samples — caller handles byte decoding.
 pub async fn process_session(
     config: &PipelineConfig,
     input: SessionInput,
-    filters: &mut [Box<dyn StreamFilter>],
+    operators: &mut [Box<dyn Operator>],
 ) -> Result<PipelineResult> {
     let pipeline_start = Instant::now();
     let session_id = input.session_id;
@@ -195,15 +195,15 @@ pub async fn process_session(
         "transcription complete"
     );
 
-    // --- Filter Chain ---
-    let filter_start = Instant::now();
-    let pre_filter_count = segments.len();
-    let filtered = filters::apply_filters(segments, filters).await?;
-    let filter_ms = filter_start.elapsed().as_millis();
+    // --- Operator Chain ---
+    let operator_start = Instant::now();
+    let pre_operator_count = segments.len();
+    let processed = operators::apply_operators(segments, operators).await?;
+    let operator_ms = operator_start.elapsed().as_millis();
 
-    let segments_produced = filtered.iter().filter(|s| !s.excluded).count() as u32;
-    let segments_excluded = filtered.iter().filter(|s| s.excluded).count() as u32;
-    let scenes_detected = filtered
+    let segments_produced = processed.iter().filter(|s| !s.excluded).count() as u32;
+    let segments_excluded = processed.iter().filter(|s| s.excluded).count() as u32;
+    let scenes_detected = processed
         .iter()
         .filter(|s| !s.excluded)
         .filter_map(|s| s.chunk_group)
@@ -212,13 +212,13 @@ pub async fn process_session(
         .unwrap_or(0);
 
     tracing::info!(
-        stage = "filters",
-        input_segments = pre_filter_count,
+        stage = "operators",
+        input_segments = pre_operator_count,
         kept = segments_produced,
         excluded = segments_excluded,
         scenes = scenes_detected,
-        duration_ms = filter_ms,
-        "filter chain complete"
+        duration_ms = operator_ms,
+        "operator chain complete"
     );
 
     // --- Pipeline Summary ---
@@ -237,14 +237,14 @@ pub async fn process_session(
         rms_ms = rms_ms,
         vad_ms = vad_ms,
         whisper_ms = whisper_ms,
-        filter_ms = filter_ms,
+        operator_ms = operator_ms,
         whisper_pct = format_args!("{:.0}", whisper_ms as f64 / pipeline_ms as f64 * 100.0),
         realtime_factor = format_args!("{:.1}x", input_duration / (pipeline_ms as f32 / 1000.0)),
         "pipeline complete"
     );
 
     Ok(PipelineResult {
-        segments: filtered,
+        segments: processed,
         segments_produced,
         segments_excluded,
         scenes_detected,

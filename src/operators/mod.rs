@@ -1,6 +1,6 @@
-//! Filter chain for post-transcription processing.
+//! Operator chain for post-transcription processing.
 //!
-//! Filters implement the `StreamFilter` trait and are applied in order
+//! Operators implement the `Operator` trait and are applied in order
 //! to each transcript segment. The crate ships with hallucination
 //! detection and scene chunking.
 
@@ -10,10 +10,10 @@ pub mod scene_chunker;
 use crate::error::{PipelineError, Result};
 use crate::types::TranscriptSegment;
 
-/// Result of applying a filter to a single segment.
+/// Result of applying an operator to a single segment.
 #[derive(Debug, Clone)]
-pub enum FilterResult {
-    /// Segment passes this filter.
+pub enum OperatorResult {
+    /// Segment passes this operator.
     Pass,
     /// Segment should be excluded, with a reason.
     Exclude {
@@ -22,17 +22,17 @@ pub enum FilterResult {
     },
 }
 
-/// Trait for pluggable transcript filters.
+/// Trait for pluggable transcript operators.
 ///
-/// Each filter maintains internal state and processes segments one at a time
+/// Each operator maintains internal state and processes segments one at a time
 /// via `on_segment`. Periodic `sweep` calls allow retroactive analysis
 /// (e.g. frequency-based hallucination detection). `finalize` is called
 /// once after all segments are processed.
 #[async_trait::async_trait]
-pub trait StreamFilter: Send + Sync {
+pub trait Operator: Send + Sync {
     /// Process a single segment. May mutate the segment (e.g. set `chunk_group`)
     /// or return `Exclude` to mark it for removal.
-    async fn on_segment(&mut self, segment: &mut TranscriptSegment) -> FilterResult;
+    async fn on_segment(&mut self, segment: &mut TranscriptSegment) -> OperatorResult;
 
     /// Periodic sweep for retroactive analysis. Returns the number of
     /// segments retroactively excluded.
@@ -43,25 +43,25 @@ pub trait StreamFilter: Send + Sync {
     async fn finalize(&mut self) -> Result<()>;
 }
 
-/// Apply all filters to a list of transcript segments.
+/// Apply all operators to a list of transcript segments.
 ///
-/// Each segment passes through every filter in order. If any filter
+/// Each segment passes through every operator in order. If any operator
 /// returns `Exclude`, the segment is marked as excluded with the reason.
-/// After all segments, `sweep` and `finalize` are called on each filter.
-pub async fn apply_filters(
+/// After all segments, `sweep` and `finalize` are called on each operator.
+pub async fn apply_operators(
     mut segments: Vec<TranscriptSegment>,
-    filters: &mut [Box<dyn StreamFilter>],
+    operators: &mut [Box<dyn Operator>],
 ) -> Result<Vec<TranscriptSegment>> {
-    // Run each segment through all filters
+    // Run each segment through all operators
     for segment in segments.iter_mut() {
-        for filter in filters.iter_mut() {
+        for operator in operators.iter_mut() {
             if segment.excluded {
-                break; // Already excluded by a previous filter
+                break; // Already excluded by a previous operator
             }
 
-            match filter.on_segment(segment).await {
-                FilterResult::Pass => {}
-                FilterResult::Exclude { reason } => {
+            match operator.on_segment(segment).await {
+                OperatorResult::Pass => {}
+                OperatorResult::Exclude { reason } => {
                     segment.excluded = true;
                     segment.exclude_reason = Some(reason);
                 }
@@ -69,17 +69,17 @@ pub async fn apply_filters(
         }
     }
 
-    // Run sweep on each filter for retroactive analysis
-    for filter in filters.iter_mut() {
-        filter
+    // Run sweep on each operator for retroactive analysis
+    for operator in operators.iter_mut() {
+        operator
             .sweep()
             .await
             .map_err(|e| PipelineError::Filter(e.to_string()))?;
     }
 
-    // Finalize each filter
-    for filter in filters.iter_mut() {
-        filter
+    // Finalize each operator
+    for operator in operators.iter_mut() {
+        operator
             .finalize()
             .await
             .map_err(|e| PipelineError::Filter(e.to_string()))?;
@@ -88,7 +88,7 @@ pub async fn apply_filters(
     tracing::info!(
         total = segments.len(),
         excluded = segments.iter().filter(|s| s.excluded).count(),
-        "filter chain complete"
+        "operator chain complete"
     );
 
     Ok(segments)
@@ -122,7 +122,7 @@ mod tests {
             make_segment("Hello world", 0.0, 1.0, "a"),
             make_segment("How are you", 1.0, 2.0, "b"),
         ];
-        let mut filters = default_filters();
+        let mut filters = default_operators();
         let result = apply_filters(segments, &mut filters).await.unwrap();
         assert_eq!(result.len(), 2);
         assert!(!result[0].excluded);
@@ -135,7 +135,7 @@ mod tests {
             make_segment("", 0.0, 1.0, "a"),
             make_segment("Good text", 1.0, 2.0, "a"),
         ];
-        let mut filters = default_filters();
+        let mut filters = default_operators();
         let result = apply_filters(segments, &mut filters).await.unwrap();
         assert!(result[0].excluded);
         assert!(!result[1].excluded);
@@ -149,7 +149,7 @@ mod tests {
             // 60 second gap — should trigger scene break (default max_silence_gap is 30s)
             make_segment("Scene two dialog", 63.0, 64.0, "a"),
         ];
-        let mut filters = default_filters();
+        let mut filters = default_operators();
         let result = apply_filters(segments, &mut filters).await.unwrap();
         assert_eq!(result[0].chunk_group, Some(0));
         assert_eq!(result[1].chunk_group, Some(0));
@@ -161,7 +161,7 @@ mod tests {
         // An empty segment should be excluded by hallucination filter
         // and never reach the scene chunker (no chunk_group assigned)
         let segments = vec![make_segment("", 0.0, 1.0, "a")];
-        let mut filters = default_filters();
+        let mut filters = default_operators();
         let result = apply_filters(segments, &mut filters).await.unwrap();
         assert!(result[0].excluded);
         assert!(result[0].chunk_group.is_none());
@@ -183,7 +183,7 @@ mod tests {
             ));
         }
 
-        let mut filters = default_filters();
+        let mut filters = default_operators();
         let result = apply_filters(segments, &mut filters).await.unwrap();
 
         let thank_yous: Vec<_> = result.iter()
@@ -195,12 +195,12 @@ mod tests {
     }
 }
 
-/// Create the default filter chain: hallucination detection + scene chunking.
-pub fn default_filters() -> Vec<Box<dyn StreamFilter>> {
+/// Create the default operator chain: hallucination detection + scene chunking.
+pub fn default_operators() -> Vec<Box<dyn Operator>> {
     vec![
-        Box::new(hallucination::HallucinationFilter::new()),
-        Box::new(scene_chunker::SceneChunker::new(
-            scene_chunker::SceneChunkerConfig::default(),
+        Box::new(hallucination::HallucinationOperator::new()),
+        Box::new(scene_chunker::SceneOperator::new(
+            scene_chunker::SceneOperatorConfig::default(),
         )),
     ]
 }
