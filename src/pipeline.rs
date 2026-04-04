@@ -1,10 +1,12 @@
 //! Pipeline orchestration.
 //!
-//! The main `process_session` function chains all stages with `?`.
-//! Each step is a plain function call — the happy path reads
-//! top-to-bottom like pseudocode.
+//! Chains streaming stages: resample → RMS audio detection →
+//! Silero VAD → Whisper transcription → filters. Input is mono f32
+//! samples per speaker — byte decoding and downmix are the caller's
+//! responsibility.
 
-use crate::audio::{decode, resample};
+use crate::ad::{self, RmsConfig};
+use crate::audio::resample;
 use crate::error::Result;
 use crate::filters::{self, StreamFilter};
 use crate::transcribe::{self, TranscriberConfig};
@@ -14,18 +16,22 @@ use crate::vad::{self, VadConfig};
 /// Top-level pipeline configuration.
 #[derive(Debug, Clone)]
 pub struct PipelineConfig {
-    /// VAD configuration.
+    /// RMS audio detection (tier 1 — silence gate).
+    pub rms: RmsConfig,
+    /// VAD configuration (tier 2 — speech vs non-speech).
     pub vad: VadConfig,
     /// Whisper transcription configuration.
     pub whisper: TranscriberConfig,
     /// Minimum speech region duration in seconds. Regions shorter
-    /// than this are dropped before transcription.
+    /// than this are dropped before transcription — the "pop filter"
+    /// that catches blips, breaths, and mic noise pre-Whisper.
     pub min_chunk_duration: f32,
 }
 
 impl Default for PipelineConfig {
     fn default() -> Self {
         Self {
+            rms: RmsConfig::default(),
             vad: VadConfig::default(),
             whisper: TranscriberConfig {
                 endpoint: "http://localhost:8080/v1/audio/transcriptions".into(),
@@ -39,11 +45,10 @@ impl Default for PipelineConfig {
 
 /// Process a completed recording session end-to-end.
 ///
-/// Takes raw PCM audio per speaker, runs VAD, transcribes via Whisper,
-/// applies filters, and returns structured transcript segments.
-///
-/// Each stage is a plain function chained with `?` — the compiler
-/// enforces that we don't skip steps or reorder them.
+/// Audio flows through: resample (to 16kHz) → RMS audio detection
+/// (silence removed) → Silero VAD (non-speech removed) → Whisper
+/// (speech → text) → filters (hallucination detection, scene chunking).
+/// Input is already mono f32 samples — caller handles byte decoding.
 pub async fn process_session(
     config: &PipelineConfig,
     input: SessionInput,
@@ -51,31 +56,40 @@ pub async fn process_session(
 ) -> Result<PipelineResult> {
     let session_id = input.session_id;
 
-    // Decode raw s16le PCM bytes into mono f32 samples
-    let samples = decode::decode(&input.tracks)?;
+    // Resample to 16kHz for VAD and Whisper.
+    // Input is already mono f32 — caller handled byte decoding and downmix.
+    let input_rate = input.tracks.first().map(|t| t.sample_rate).unwrap_or(48000);
+    let resampled = resample::resample(&input.tracks, input_rate, 16000)?;
 
-    // Resample from input rate (48kHz) to 16kHz for Whisper/VAD
-    let resampled = resample::resample(&samples, 48000, 16000)?;
-
-    // Calculate total audio duration for reporting
-    let duration_processed = resampled
+    let duration_processed: f32 = resampled
         .iter()
         .map(|s| s.samples.len() as f32 / s.sample_rate as f32)
-        .sum::<f32>();
+        .sum();
 
-    // Run voice activity detection to find speech regions
-    let regions = vad::detect_speech(&config.vad, &resampled).await?;
+    // 3. RMS audio detection — silence gate (tier 1).
+    //    Removes dead air before it reaches VAD.
+    let audio_segments = ad::detect_audio_all(&config.rms, &resampled);
 
-    // Extract audio chunks from speech regions
-    let chunks = vad::extract_chunks(&resampled, &regions, config.min_chunk_duration)?;
+    // 4. Silero VAD — speech vs non-speech (tier 2).
+    //    Catches breaths, keyboard, mic bumps that passed RMS.
+    let voice_chunks =
+        vad::detect_speech_from_segments(&config.vad, &audio_segments).await?;
 
-    // Transcribe each chunk via the external Whisper endpoint
-    let segments = transcribe::transcribe(&config.whisper, &chunks, session_id).await?;
+    tracing::info!(
+        speakers = input.tracks.len(),
+        duration_processed,
+        rms_segments = audio_segments.len(),
+        voice_chunks = voice_chunks.len(),
+        "audio detection complete, sending speech to Whisper"
+    );
 
-    // Apply filter chain (hallucination detection, scene chunking)
+    // 5. Transcribe speech chunks via Whisper.
+    let segments =
+        transcribe::transcribe(&config.whisper, &voice_chunks, session_id).await?;
+
+    // 6. Filter chain (hallucination detection, scene chunking).
     let filtered = filters::apply_filters(segments, filters).await?;
 
-    // Compute result stats
     let segments_produced = filtered.iter().filter(|s| !s.excluded).count() as u32;
     let segments_excluded = filtered.iter().filter(|s| s.excluded).count() as u32;
     let scenes_detected = filtered
