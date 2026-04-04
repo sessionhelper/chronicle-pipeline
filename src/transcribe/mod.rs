@@ -30,15 +30,34 @@ pub async fn transcribe(
 ) -> Result<Vec<TranscriptSegment>> {
     let mut all_segments = Vec::new();
     let mut segment_index = 0u32;
+    let mut total_audio_secs = 0.0f32;
 
-    for chunk in chunks {
+    for (i, chunk) in chunks.iter().enumerate() {
+        let chunk_duration = chunk.samples.len() as f32 / chunk.sample_rate as f32;
+        total_audio_secs += chunk_duration;
+
+        let start = std::time::Instant::now();
         let segments = transcribe_chunk(config, chunk, session_id, &mut segment_index).await?;
+        let request_ms = start.elapsed().as_millis();
+
+        tracing::debug!(
+            stage = "whisper",
+            chunk = i,
+            speaker = %chunk.speaker,
+            chunk_duration_secs = format_args!("{:.1}", chunk_duration),
+            offset_secs = format_args!("{:.1}", chunk.original_start),
+            segments_returned = segments.len(),
+            request_ms = request_ms,
+            "chunk transcribed"
+        );
+
         all_segments.extend(segments);
     }
 
     tracing::info!(
         total_segments = all_segments.len(),
         chunks = chunks.len(),
+        total_audio_secs = format_args!("{:.1}", total_audio_secs),
         "transcription complete"
     );
 

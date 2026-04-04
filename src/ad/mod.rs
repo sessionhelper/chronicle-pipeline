@@ -46,6 +46,7 @@ pub struct AudioSegment {
 /// When energy rises above threshold, starts accumulating. When energy
 /// stays below threshold for `silence_gap` seconds, emits the segment.
 pub fn detect_audio(config: &RmsConfig, speaker: &SpeakerSamples) -> Vec<AudioSegment> {
+    let start = std::time::Instant::now();
     let sr = speaker.sample_rate as f32;
     let silence_frames = (config.silence_gap * sr / config.frame_size as f32).ceil() as usize;
 
@@ -113,10 +114,17 @@ pub fn detect_audio(config: &RmsConfig, speaker: &SpeakerSamples) -> Vec<AudioSe
         }
     }
 
+    let active_duration: f32 = segments.iter().map(|s| s.end_time - s.start_time).sum();
+    let total_duration = samples.len() as f32 / sr;
+
     tracing::debug!(
+        stage = "rms",
         speaker = %speaker.pseudo_id,
-        total_duration = samples.len() as f32 / sr,
+        total_duration_secs = format_args!("{:.1}", total_duration),
+        active_duration_secs = format_args!("{:.1}", active_duration),
         segments = segments.len(),
+        silence_pct = format_args!("{:.0}", (1.0 - active_duration / total_duration) * 100.0),
+        duration_ms = start.elapsed().as_millis(),
         "RMS audio detection complete"
     );
 

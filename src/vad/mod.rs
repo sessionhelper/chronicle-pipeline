@@ -58,6 +58,7 @@ pub async fn detect_speech_from_segments(
     segments: &[AudioSegment],
 ) -> Result<Vec<AudioChunk>> {
     let mut all_chunks = Vec::new();
+    let input_duration: f32 = segments.iter().map(|s| s.end_time - s.start_time).sum();
 
     for segment in segments {
         let speaker_samples = SpeakerSamples {
@@ -89,9 +90,18 @@ pub async fn detect_speech_from_segments(
         }
     }
 
+    let output_duration: f32 = all_chunks.iter()
+        .map(|c| c.original_end - c.original_start)
+        .sum();
+
     tracing::info!(
+        stage = "vad",
         input_segments = segments.len(),
+        input_duration_secs = format_args!("{:.1}", input_duration),
         output_chunks = all_chunks.len(),
+        output_duration_secs = format_args!("{:.1}", output_duration),
+        reduction_pct = format_args!("{:.0}",
+            if input_duration > 0.0 { (1.0 - output_duration / input_duration) * 100.0 } else { 0.0 }),
         "VAD processing complete"
     );
 
@@ -130,6 +140,7 @@ fn detect_speech_for_speaker(
     speaker: &SpeakerSamples,
 ) -> Result<Vec<SpeechRegion>> {
     use ort::value::Tensor;
+    use std::time::Instant;
 
     if speaker.sample_rate != 16000 {
         return Err(PipelineError::Vad(format!(
@@ -143,10 +154,12 @@ fn detect_speech_for_speaker(
     }
 
     // Load model
+    let model_start = Instant::now();
     let mut session = ort::session::Session::builder()
         .map_err(|e| PipelineError::Vad(format!("ort session builder: {}", e)))?
         .commit_from_file(&config.model_path)
         .map_err(|e| PipelineError::Vad(format!("load model {:?}: {}", config.model_path, e)))?;
+    let model_load_ms = model_start.elapsed().as_millis();
 
     let num_frames = speaker.samples.len() / FRAME_SIZE;
     if num_frames == 0 {
@@ -159,6 +172,7 @@ fn detect_speech_for_speaker(
 
     let mut all_probs: Vec<f32> = Vec::with_capacity(num_frames);
 
+    let inference_start = Instant::now();
     let mut frame_idx = 0;
     while frame_idx < num_frames {
         let batch_len = BATCH_SIZE.min(num_frames - frame_idx);
@@ -208,19 +222,32 @@ fn detect_speech_for_speaker(
         frame_idx += batch_len;
     }
 
+    let inference_ms = inference_start.elapsed().as_millis();
+
     // Convert frame probabilities to speech regions
     let raw_regions = merge_speech_frames(&all_probs, config.threshold, &speaker.pseudo_id);
     let filtered = filter_regions(
-        raw_regions,
+        raw_regions.clone(),
         config,
         speaker.samples.len() as f32 / speaker.sample_rate as f32,
     );
 
+    let audio_duration = speaker.samples.len() as f32 / speaker.sample_rate as f32;
+    let speech_duration: f32 = filtered.iter().map(|r| r.end - r.start).sum();
+    let speech_frames = all_probs.iter().filter(|&&p| p >= config.threshold).count();
+
     tracing::debug!(
+        stage = "vad",
         speaker = %speaker.pseudo_id,
+        audio_duration_secs = format_args!("{:.1}", audio_duration),
         frames = num_frames,
-        raw_regions = all_probs.iter().filter(|&&p| p >= config.threshold).count(),
-        speech_regions = filtered.len(),
+        speech_frames = speech_frames,
+        raw_regions = raw_regions.len(),
+        filtered_regions = filtered.len(),
+        speech_duration_secs = format_args!("{:.1}", speech_duration),
+        speech_pct = format_args!("{:.0}", speech_duration / audio_duration * 100.0),
+        model_load_ms = model_load_ms,
+        inference_ms = inference_ms,
         "VAD complete for speaker"
     );
 
