@@ -98,7 +98,7 @@ fn parse_info_txt(path: &Path) -> CraigInfo {
     for line in content.lines() {
         let trimmed = line.trim();
         if trimmed.starts_with("Guild:") {
-            // "Guild:\t\tDark Heresy 2e TTRPG (557647168052264962)"
+            // "Guild:\t\tMy Campaign (557647168052264962)"
             let val = trimmed.trim_start_matches("Guild:").trim();
             if let Some(paren_start) = val.rfind('(') {
                 guild_name = val[..paren_start].trim().to_string();
@@ -121,7 +121,7 @@ fn parse_info_txt(path: &Path) -> CraigInfo {
         } else if trimmed == "Tracks:" {
             in_tracks = true;
         } else if in_tracks && !trimmed.is_empty() {
-            // "\tfenixwhitewood#0 (529123741276438528)"
+            // "\tusername#0 (123456789012345678)"
             if let Some(paren_start) = trimmed.rfind('(') {
                 let name_part = trimmed[..paren_start].trim();
                 let username = name_part.split('#').next().unwrap_or(name_part).to_string();

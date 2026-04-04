@@ -151,7 +151,7 @@ struct CorrectionLayer {
     pass: u32,               // which pass (0 = original, 1+ = corrections)
     old_value: String,
     new_value: String,
-    reason: String,          // why — "entity_link: 'the father' → Tullus Renis"
+    reason: String,          // why — "entity_link: 'the father' → NPC name"
     timestamp: f32,          // event time, not wall clock
 }
 ```
@@ -185,7 +185,7 @@ Layer 3: Structure    (scene segmentation)
 
 Layer 3 can correct layers 2 and 1. Layer 2 can correct layer 1. No upward corrections. No same-layer corrections. This eliminates recursive loops by construction.
 
-**Self-correction** is allowed: a stage can re-evaluate its own buffer when it receives new information. Example: lore reconciliation processes "the merchant" with no match, then later processes "You meet a woman named Serena Voss" — it recognizes the introduction, creates a provisional entity, and re-scans its own buffer to link earlier "the merchant" references. This is internal re-evaluation, not a cross-layer correction, so no DAG violation.
+**Self-correction** is allowed: a stage can re-evaluate its own buffer when it receives new information. Example: lore reconciliation processes "the merchant" with no match, then later processes "You meet a woman named Elena" — it recognizes the introduction, creates a provisional entity, and re-scans its own buffer to link earlier "the merchant" references. This is internal re-evaluation, not a cross-layer correction, so no DAG violation.
 
 ### Deferred Corrections
 

@@ -17,11 +17,11 @@ use ovp_pipeline::audio::resample;
 const SCENE_DIR: &str = "test_data/scene_01";
 const VAD_MODEL: &str = "models/silero_vad_v6.onnx";
 
-// Speaker pseudo IDs from the Craig recording
-const FENIX: &str = "102597e0ee793a7b";
+// Speaker pseudo IDs from test recording
+const SPEAKER_A: &str = "102597e0ee793a7b";
 const GM: &str = "2f09cc7c1965a203";
-const AMARATHA: &str = "787a9547c27cd7f8";
-const JANSEN: &str = "d0143e57ce524cdc";
+const SPEAKER_C: &str = "787a9547c27cd7f8";
+const SPEAKER_D: &str = "d0143e57ce524cdc";
 
 /// Load a speaker's PCM chunks from test_data, decode to mono f32.
 fn load_speaker(pseudo_id: &str) -> Option<ovp_pipeline::SpeakerTrack> {
@@ -65,7 +65,7 @@ fn load_speaker(pseudo_id: &str) -> Option<ovp_pipeline::SpeakerTrack> {
 
 /// Load all 4 speakers, return None if test data isn't available.
 fn load_all_speakers() -> Option<Vec<ovp_pipeline::SpeakerTrack>> {
-    let tracks: Vec<_> = [FENIX, GM, AMARATHA, JANSEN]
+    let tracks: Vec<_> = [SPEAKER_A, GM, SPEAKER_C, SPEAKER_D]
         .iter()
         .filter_map(|id| load_speaker(id))
         .collect();
@@ -108,9 +108,9 @@ fn rms_reduces_total_audio_duration() {
 }
 
 #[test]
-fn rms_amaratha_mostly_silent() {
+fn rms_hot_mic_speaker_mostly_silent() {
     if !has_test_data() { eprintln!("SKIP: no test data"); return; }
-    let track = load_speaker(AMARATHA).unwrap();
+    let track = load_speaker(SPEAKER_C).unwrap();
     let resampled = resample::resample(&[track], 48000, 16000).unwrap();
 
     let total_duration = resampled[0].samples.len() as f32 / 16000.0;
@@ -121,15 +121,15 @@ fn rms_amaratha_mostly_silent() {
         .map(|s| s.end_time - s.start_time)
         .sum();
 
-    // amaratha is a hot-mic track — mostly silence with brief speech.
+    // Speaker C is a hot-mic track — mostly silence with brief speech.
     // Active audio should be well under 30% of total.
     assert!(active_duration < total_duration * 0.30,
-        "amaratha should be <30% active: {:.0}s total, {:.0}s active ({:.0}%)",
+        "hot-mic speaker should be <30% active: {:.0}s total, {:.0}s active ({:.0}%)",
         total_duration, active_duration, active_duration / total_duration * 100.0);
 }
 
 #[test]
-fn rms_gm_mostly_active() {
+fn rms_narrator_mostly_active() {
     if !has_test_data() { eprintln!("SKIP: no test data"); return; }
     let track = load_speaker(GM).unwrap();
     let resampled = resample::resample(&[track], 48000, 16000).unwrap();
@@ -185,9 +185,9 @@ fn rms_timestamps_within_bounds() {
 // ============================================================
 
 #[tokio::test]
-async fn vad_further_reduces_amaratha() {
+async fn vad_further_reduces_hot_mic() {
     if !has_test_data() || !has_vad_model() { eprintln!("SKIP: missing test data or VAD model"); return; }
-    let track = load_speaker(AMARATHA).unwrap();
+    let track = load_speaker(SPEAKER_C).unwrap();
     let resampled = resample::resample(&[track], 48000, 16000).unwrap();
 
     let rms_config = RmsConfig::default();
@@ -208,13 +208,13 @@ async fn vad_further_reduces_amaratha() {
         "VAD should not produce more chunks than RMS segments: {} VAD > {} RMS",
         vad_chunks.len(), rms_count);
 
-    // amaratha has ~7-8 real speech moments in this scene
+    // Speaker C has ~7-8 real speech moments in this scene
     assert!(vad_chunks.len() < 20,
-        "amaratha should have few VAD chunks (ground truth ~7-8), got {}", vad_chunks.len());
+        "hot-mic speaker should have few VAD chunks (ground truth ~7-8), got {}", vad_chunks.len());
 }
 
 #[tokio::test]
-async fn vad_preserves_gm_speech() {
+async fn vad_preserves_narrator_speech() {
     if !has_test_data() || !has_vad_model() { eprintln!("SKIP: missing test data or VAD model"); return; }
     let track = load_speaker(GM).unwrap();
     let resampled = resample::resample(&[track], 48000, 16000).unwrap();
@@ -322,16 +322,16 @@ async fn full_pipeline_scene_01() {
     assert!(kept.len() > 50 && kept.len() < 200,
         "expected 50-200 kept segments, got {}", kept.len());
 
-    // amaratha: ground truth ~7-8 real speech segments
+    // Speaker C (hot-mic): ground truth ~7-8 real speech segments
     let ama_kept: Vec<_> = kept.iter()
-        .filter(|s| s.speaker_pseudo_id == AMARATHA)
+        .filter(|s| s.speaker_pseudo_id == SPEAKER_C)
         .collect();
     assert!(ama_kept.len() >= 4 && ama_kept.len() <= 15,
-        "amaratha should have 4-15 segments (ground truth ~7-8), got {}", ama_kept.len());
+        "hot-mic speaker should have 4-15 segments (ground truth ~7-8), got {}", ama_kept.len());
 
     // GM should have the most segments (narrator)
     let gm_kept = kept.iter().filter(|s| s.speaker_pseudo_id == GM).count();
-    let max_other = [FENIX, AMARATHA, JANSEN].iter()
+    let max_other = [SPEAKER_A, SPEAKER_C, SPEAKER_D].iter()
         .map(|id| kept.iter().filter(|s| s.speaker_pseudo_id == *id).count())
         .max()
         .unwrap_or(0);
@@ -345,7 +345,7 @@ async fn full_pipeline_scene_01() {
     }
 
     // Timestamps should be monotonically non-decreasing per speaker
-    for speaker_id in &[FENIX, GM, AMARATHA, JANSEN] {
+    for speaker_id in &[SPEAKER_A, GM, SPEAKER_C, SPEAKER_D] {
         let speaker_segs: Vec<_> = kept.iter()
             .filter(|s| s.speaker_pseudo_id == *speaker_id)
             .collect();
