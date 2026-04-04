@@ -306,7 +306,7 @@ async fn full_pipeline_scene_01() {
     };
 
     let input = ovp_pipeline::SessionInput { session_id, tracks };
-    let mut filters = ovp_pipeline::default_filters();
+    let mut filters = ovp_pipeline::default_operators();
 
     let result = ovp_pipeline::process_session(&config, input, &mut filters)
         .await

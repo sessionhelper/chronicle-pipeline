@@ -19,7 +19,7 @@ pub mod vad;
 
 // Re-export the main public API at the crate root for convenience.
 pub use error::{PipelineError, Result};
-pub use operators::{default_operators, OperatorResult, Operator};
+pub use operators::{default_operators, operators_with_llm_scene, OperatorResult, Operator};
 pub use pipeline::{process_session, PipelineConfig};
 pub use transcribe::TranscriberConfig;
 pub use types::*;

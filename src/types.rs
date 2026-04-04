@@ -81,6 +81,9 @@ pub struct TranscriptSegment {
     pub original_text: String,
     /// Whisper confidence score, if available.
     pub confidence: Option<f32>,
+    /// Beat identifier assigned by the beat operator.
+    #[serde(default)]
+    pub beat_id: Option<u32>,
     /// Scene/chunk group assigned by the scene operator.
     pub chunk_group: Option<u32>,
     /// Whether this segment was excluded by an operator.

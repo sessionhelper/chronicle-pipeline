@@ -148,6 +148,7 @@ mod tests {
             text: "test".into(),
             original_text: "test".into(),
             confidence: None,
+            beat_id: None,
             chunk_group: None,
             excluded: false,
             exclude_reason: None,

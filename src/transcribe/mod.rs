@@ -159,6 +159,7 @@ async fn transcribe_chunk(
                 text: text.clone(),
                 original_text: text,
                 confidence: seg["avg_logprob"].as_f64().map(|v| v as f32),
+                beat_id: None,
                 chunk_group: None,
                 excluded: false,
                 exclude_reason: None,

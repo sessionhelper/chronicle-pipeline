@@ -232,6 +232,7 @@ mod tests {
             text: text.into(),
             original_text: text.into(),
             confidence: None,
+            beat_id: None,
             chunk_group: None,
             excluded: false,
             exclude_reason: None,

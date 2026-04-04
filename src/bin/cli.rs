@@ -22,7 +22,7 @@ use symphonia_core::probe::Hint;
 use uuid::Uuid;
 
 use ovp_pipeline::{
-    default_operators, process_session, PipelineConfig, SessionInput, SpeakerTrack, TranscriberConfig,
+    default_operators, operators_with_llm_scene, process_session, PipelineConfig, SessionInput, SpeakerTrack, TranscriberConfig,
     VadConfig,
 };
 
@@ -65,6 +65,15 @@ enum Command {
         /// Path to Silero VAD ONNX model.
         #[arg(long, default_value = "models/silero_vad_v6.onnx")]
         vad_model: PathBuf,
+        /// LLM endpoint for scene segmentation (enables context-aware scenes).
+        #[arg(long)]
+        scene_llm_url: Option<String>,
+        /// LLM model name for scene segmentation.
+        #[arg(long, default_value = "phi3.5")]
+        scene_llm_model: String,
+        /// GM speaker pseudo_id (for narration cue detection).
+        #[arg(long)]
+        gm_speaker: Option<String>,
         /// Output JSON file (default: stdout).
         #[arg(long)]
         output: Option<PathBuf>,
@@ -414,7 +423,7 @@ fn cmd_ingest(input_dir: &Path, output_dir: &Path, start: f32, duration: Option<
 
 // --- Run command ---
 
-fn cmd_run(session_dir: &Path, whisper_url: &str, model: &str, vad_model: &Path, output: Option<&Path>) {
+fn cmd_run(session_dir: &Path, whisper_url: &str, model: &str, vad_model: &Path, scene_llm_url: Option<&str>, scene_llm_model: &str, gm_speaker: Option<&str>, output: Option<&Path>) {
     // Read meta.json
     let meta_path = session_dir.join("meta.json");
     let meta_str = fs::read_to_string(&meta_path).expect("Failed to read meta.json");
@@ -515,7 +524,24 @@ fn cmd_run(session_dir: &Path, whisper_url: &str, model: &str, vad_model: &Path,
         tracks,
     };
 
-    let mut operators = default_operators();
+    let mut operators = if let Some(llm_url) = scene_llm_url {
+        println!("  Scene LLM: {} ({})", llm_url, scene_llm_model);
+        let beat_config = ovp_pipeline::operators::beat::BeatConfig {
+            endpoint: llm_url.to_string(),
+            model: scene_llm_model.to_string(),
+            gm_speaker_id: gm_speaker.map(String::from),
+            ..Default::default()
+        };
+        let scene_config = ovp_pipeline::operators::scene::SceneConfig {
+            endpoint: llm_url.to_string(),
+            model: scene_llm_model.to_string(),
+            gm_speaker_id: gm_speaker.map(String::from),
+            ..Default::default()
+        };
+        operators_with_llm_scene(beat_config, scene_config)
+    } else {
+        default_operators()
+    };
 
     let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
     let result = rt.block_on(async { process_session(&config, input, &mut operators).await });
@@ -566,7 +592,10 @@ fn main() {
             whisper_url,
             model,
             vad_model,
+            scene_llm_url,
+            scene_llm_model,
+            gm_speaker,
             output,
-        } => cmd_run(&session_dir, &whisper_url, &model, &vad_model, output.as_deref()),
+        } => cmd_run(&session_dir, &whisper_url, &model, &vad_model, scene_llm_url.as_deref(), &scene_llm_model, gm_speaker.as_deref(), output.as_deref()),
     }
 }

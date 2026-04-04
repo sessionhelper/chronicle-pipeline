@@ -4,6 +4,7 @@
 //! to each transcript segment. The crate ships with hallucination
 //! detection and scene chunking.
 
+pub mod beat;
 pub mod hallucination;
 pub mod scene;
 pub mod scene_chunker;
@@ -112,38 +113,39 @@ mod tests {
             original_text: text.into(),
             confidence: None,
             chunk_group: None,
+            beat_id: None,
             excluded: false,
             exclude_reason: None,
         }
     }
 
     #[tokio::test]
-    async fn apply_filters_passes_clean_segments() {
+    async fn apply_operators_passes_clean_segments() {
         let segments = vec![
             make_segment("Hello world", 0.0, 1.0, "a"),
             make_segment("How are you", 1.0, 2.0, "b"),
         ];
         let mut filters = default_operators();
-        let result = apply_filters(segments, &mut filters).await.unwrap();
+        let result = apply_operators(segments, &mut filters).await.unwrap();
         assert_eq!(result.len(), 2);
         assert!(!result[0].excluded);
         assert!(!result[1].excluded);
     }
 
     #[tokio::test]
-    async fn apply_filters_excludes_empty() {
+    async fn apply_operators_excludes_empty() {
         let segments = vec![
             make_segment("", 0.0, 1.0, "a"),
             make_segment("Good text", 1.0, 2.0, "a"),
         ];
         let mut filters = default_operators();
-        let result = apply_filters(segments, &mut filters).await.unwrap();
+        let result = apply_operators(segments, &mut filters).await.unwrap();
         assert!(result[0].excluded);
         assert!(!result[1].excluded);
     }
 
     #[tokio::test]
-    async fn apply_filters_assigns_scene_groups() {
+    async fn apply_operators_assigns_scene_groups() {
         let segments = vec![
             make_segment("Scene one dialog", 0.0, 1.0, "a"),
             make_segment("More scene one", 2.0, 3.0, "a"),
@@ -151,19 +153,19 @@ mod tests {
             make_segment("Scene two dialog", 63.0, 64.0, "a"),
         ];
         let mut filters = default_operators();
-        let result = apply_filters(segments, &mut filters).await.unwrap();
+        let result = apply_operators(segments, &mut filters).await.unwrap();
         assert_eq!(result[0].chunk_group, Some(0));
         assert_eq!(result[1].chunk_group, Some(0));
         assert_eq!(result[2].chunk_group, Some(1));
     }
 
     #[tokio::test]
-    async fn apply_filters_excluded_segment_skips_later_filters() {
+    async fn apply_operators_excluded_segment_skips_later_filters() {
         // An empty segment should be excluded by hallucination filter
         // and never reach the scene chunker (no chunk_group assigned)
         let segments = vec![make_segment("", 0.0, 1.0, "a")];
         let mut filters = default_operators();
-        let result = apply_filters(segments, &mut filters).await.unwrap();
+        let result = apply_operators(segments, &mut filters).await.unwrap();
         assert!(result[0].excluded);
         assert!(result[0].chunk_group.is_none());
     }
@@ -185,7 +187,7 @@ mod tests {
         }
 
         let mut filters = default_operators();
-        let result = apply_filters(segments, &mut filters).await.unwrap();
+        let result = apply_operators(segments, &mut filters).await.unwrap();
 
         let thank_yous: Vec<_> = result.iter()
             .filter(|s| s.original_text == "Thank you.")
@@ -196,12 +198,24 @@ mod tests {
     }
 }
 
-/// Create the default operator chain: hallucination detection + scene chunking.
+/// Create the default operator chain: hallucination detection + mechanical scene chunking.
 pub fn default_operators() -> Vec<Box<dyn Operator>> {
     vec![
         Box::new(hallucination::HallucinationOperator::new()),
         Box::new(scene_chunker::SceneOperator::new(
             scene_chunker::SceneOperatorConfig::default(),
         )),
+    ]
+}
+
+/// Create the operator chain with LLM-backed beat detection + scene grouping.
+pub fn operators_with_llm_scene(
+    beat_config: beat::BeatConfig,
+    scene_config: scene::SceneConfig,
+) -> Vec<Box<dyn Operator>> {
+    vec![
+        Box::new(hallucination::HallucinationOperator::new()),
+        Box::new(beat::BeatOperator::new(beat_config)),
+        Box::new(scene::SceneOperator::new(scene_config)),
     ]
 }
