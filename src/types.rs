@@ -6,17 +6,19 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-/// A single speaker's raw audio track as provided by the caller.
+/// A single speaker's mono PCM audio stream.
+///
+/// The caller is responsible for byte decoding, stereo downmix, and
+/// any format conversion before constructing this. The pipeline
+/// receives mono f32 samples and a sample rate — nothing else.
 #[derive(Debug, Clone)]
 pub struct SpeakerTrack {
-    /// Opaque speaker identifier (e.g. "speaker_a").
+    /// Opaque speaker identifier.
     pub pseudo_id: String,
-    /// Raw PCM bytes: signed 16-bit little-endian.
-    pub pcm_data: Vec<u8>,
-    /// Sample rate of the input audio, typically 48000 Hz from Discord.
+    /// Mono f32 audio samples in [-1.0, 1.0] range.
+    pub samples: Vec<f32>,
+    /// Sample rate of these samples (e.g. 48000 from Discord).
     pub sample_rate: u32,
-    /// Number of audio channels, typically 2 (stereo) from Discord.
-    pub channels: u16,
 }
 
 /// Input to the pipeline: a session's worth of speaker tracks.
@@ -24,19 +26,8 @@ pub struct SpeakerTrack {
 pub struct SessionInput {
     /// Unique session identifier.
     pub session_id: Uuid,
-    /// Per-speaker audio tracks to process.
+    /// Per-speaker mono PCM streams to process.
     pub tracks: Vec<SpeakerTrack>,
-}
-
-/// Decoded mono f32 samples for a single speaker.
-#[derive(Debug, Clone)]
-pub struct SpeakerSamples {
-    /// Speaker identifier, carried forward from `SpeakerTrack`.
-    pub pseudo_id: String,
-    /// Mono f32 audio samples in [-1.0, 1.0] range.
-    pub samples: Vec<f32>,
-    /// Sample rate of these samples.
-    pub sample_rate: u32,
 }
 
 /// A contiguous region of detected speech within a speaker's audio.
@@ -65,7 +56,11 @@ pub struct AudioChunk {
     pub original_end: f32,
 }
 
-/// A single transcript segment produced by Whisper and processed by filters.
+// SpeakerTrack is used throughout the pipeline where SpeakerSamples
+// was previously used. This alias keeps internal code readable.
+pub type SpeakerSamples = SpeakerTrack;
+
+/// A single transcript segment produced by Whisper and processed by operators.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TranscriptSegment {
     /// Unique segment identifier.
@@ -80,18 +75,55 @@ pub struct TranscriptSegment {
     pub start_time: f32,
     /// Absolute end time in seconds.
     pub end_time: f32,
-    /// Text after filter processing. May differ from `original_text`.
+    /// Text after operator processing. May differ from `original_text`.
     pub text: String,
     /// Immutable Whisper output, preserved for audit/debugging.
     pub original_text: String,
     /// Whisper confidence score, if available.
     pub confidence: Option<f32>,
-    /// Scene/chunk group assigned by the scene chunker filter.
+    /// Beat identifier assigned by the beat operator.
+    #[serde(default)]
+    pub beat_id: Option<u32>,
+    /// Scene/chunk group assigned by the scene operator.
     pub chunk_group: Option<u32>,
-    /// Whether this segment was excluded by a filter.
+    /// Whether this segment was excluded by an operator.
     pub excluded: bool,
     /// Reason for exclusion, if excluded.
     pub exclude_reason: Option<String>,
+}
+
+/// A narrative beat detected by the BeatOperator.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PipelineBeat {
+    /// Beat index (0-based, sequential).
+    pub beat_index: u32,
+    /// Approximate start time in seconds.
+    pub start_time: f32,
+    /// End time in seconds. Set to start_time when no better estimate is available.
+    pub end_time: f32,
+    /// Short title for the beat.
+    pub title: String,
+    /// One-sentence summary.
+    pub summary: String,
+}
+
+/// A scene grouping produced by the SceneOperator.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PipelineScene {
+    /// Scene index (0-based, sequential).
+    pub scene_index: u32,
+    /// Start time in seconds (from the earliest beat in this scene).
+    pub start_time: f32,
+    /// End time in seconds (from the latest beat in this scene).
+    pub end_time: f32,
+    /// Scene title.
+    pub title: String,
+    /// One-sentence summary.
+    pub summary: String,
+    /// First beat index included in this scene (inclusive).
+    pub beat_start: u32,
+    /// Last beat index included in this scene (inclusive).
+    pub beat_end: u32,
 }
 
 /// Final output of the pipeline.
@@ -99,9 +131,13 @@ pub struct TranscriptSegment {
 pub struct PipelineResult {
     /// All transcript segments (including excluded ones).
     pub segments: Vec<TranscriptSegment>,
-    /// Number of segments that passed filters.
+    /// Narrative beats detected by the beat operator.
+    pub beats: Vec<PipelineBeat>,
+    /// Scene groupings produced by the scene operator.
+    pub scenes: Vec<PipelineScene>,
+    /// Number of segments that passed operators.
     pub segments_produced: u32,
-    /// Number of segments excluded by filters.
+    /// Number of segments excluded by operators.
     pub segments_excluded: u32,
     /// Number of scenes detected by the scene chunker.
     pub scenes_detected: u32,

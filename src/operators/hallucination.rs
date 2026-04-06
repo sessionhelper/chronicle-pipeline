@@ -1,7 +1,7 @@
 //! Frequency-based hallucination detection.
 //!
 //! Whisper sometimes hallucinates repeated phrases, noise artifacts,
-//! or empty segments. This filter catches them via inline checks
+//! or empty segments. This operator catches them via inline checks
 //! (per-segment) and periodic sweeps (retroactive frequency analysis).
 //!
 //! No hardcoded phrase lists — detection is purely statistical.
@@ -12,10 +12,10 @@ use uuid::Uuid;
 use crate::error::Result;
 use crate::types::TranscriptSegment;
 
-use super::{FilterResult, StreamFilter};
+use super::{OperatorResult, Operator};
 
 /// Frequency-based hallucination detector.
-pub struct HallucinationFilter {
+pub struct HallucinationOperator {
     /// Global text frequency counts across all speakers.
     global_counts: HashMap<String, u32>,
     /// Per-speaker text frequency counts.
@@ -34,8 +34,8 @@ pub struct HallucinationFilter {
     speaker_dominance_threshold: f32,
 }
 
-impl HallucinationFilter {
-    /// Create a new hallucination filter with default thresholds.
+impl HallucinationOperator {
+    /// Create a new hallucination operator with default thresholds.
     pub fn new() -> Self {
         Self {
             global_counts: HashMap::new(),
@@ -74,35 +74,35 @@ impl HallucinationFilter {
     }
 }
 
-impl Default for HallucinationFilter {
+impl Default for HallucinationOperator {
     fn default() -> Self {
         Self::new()
     }
 }
 
 #[async_trait::async_trait]
-impl StreamFilter for HallucinationFilter {
-    async fn on_segment(&mut self, segment: &mut TranscriptSegment) -> FilterResult {
+impl Operator for HallucinationOperator {
+    async fn on_segment(&mut self, segment: &mut TranscriptSegment) -> OperatorResult {
         self.segment_count += 1;
         let text = segment.text.trim();
 
         // Inline check: empty text
         if text.is_empty() {
-            return FilterResult::Exclude {
+            return OperatorResult::Exclude {
                 reason: "empty transcription".into(),
             };
         }
 
         // Inline check: no alphabetic characters
         if Self::has_no_letters(text) {
-            return FilterResult::Exclude {
+            return OperatorResult::Exclude {
                 reason: "no alphabetic characters (noise)".into(),
             };
         }
 
         // Inline check: repeated single word/phrase
         if Self::is_repeated_phrase(text) {
-            return FilterResult::Exclude {
+            return OperatorResult::Exclude {
                 reason: "repeated phrase pattern".into(),
             };
         }
@@ -111,7 +111,7 @@ impl StreamFilter for HallucinationFilter {
 
         // Inline check: text already identified as noise by a previous sweep
         if self.noise_texts.contains(&normalized) {
-            return FilterResult::Exclude {
+            return OperatorResult::Exclude {
                 reason: "previously identified as noise by sweep".into(),
             };
         }
@@ -129,7 +129,7 @@ impl StreamFilter for HallucinationFilter {
         if let Some(&count) = self.global_counts.get(&normalized) {
             if count >= self.repeat_threshold {
                 self.noise_texts.insert(normalized);
-                return FilterResult::Exclude {
+                return OperatorResult::Exclude {
                     reason: format!("text repeated {} times globally", count),
                 };
             }
@@ -138,7 +138,7 @@ impl StreamFilter for HallucinationFilter {
         // Queue for retroactive sweep analysis
         self.pending.push(segment.id);
 
-        FilterResult::Pass
+        OperatorResult::Pass
     }
 
     async fn sweep(&mut self) -> Result<u32> {
@@ -210,7 +210,7 @@ impl StreamFilter for HallucinationFilter {
         tracing::info!(
             total_segments = self.segment_count,
             noise_patterns = self.noise_texts.len(),
-            "hallucination filter finalized"
+            "hallucination operator finalized"
         );
         Ok(())
     }
@@ -232,6 +232,7 @@ mod tests {
             text: text.into(),
             original_text: text.into(),
             confidence: None,
+            beat_id: None,
             chunk_group: None,
             excluded: false,
             exclude_reason: None,
@@ -240,47 +241,47 @@ mod tests {
 
     #[tokio::test]
     async fn excludes_empty_text() {
-        let mut filter = HallucinationFilter::new();
+        let mut op = HallucinationOperator::new();
         let mut seg = make_segment("");
-        let result = filter.on_segment(&mut seg).await;
-        assert!(matches!(result, FilterResult::Exclude { .. }));
+        let result = op.on_segment(&mut seg).await;
+        assert!(matches!(result, OperatorResult::Exclude { .. }));
     }
 
     #[tokio::test]
     async fn excludes_no_letters() {
-        let mut filter = HallucinationFilter::new();
+        let mut op = HallucinationOperator::new();
         let mut seg = make_segment("... --- ...");
-        let result = filter.on_segment(&mut seg).await;
-        assert!(matches!(result, FilterResult::Exclude { .. }));
+        let result = op.on_segment(&mut seg).await;
+        assert!(matches!(result, OperatorResult::Exclude { .. }));
     }
 
     #[tokio::test]
     async fn excludes_repeated_phrase() {
-        let mut filter = HallucinationFilter::new();
+        let mut op = HallucinationOperator::new();
         let mut seg = make_segment("yeah yeah yeah yeah");
-        let result = filter.on_segment(&mut seg).await;
-        assert!(matches!(result, FilterResult::Exclude { .. }));
+        let result = op.on_segment(&mut seg).await;
+        assert!(matches!(result, OperatorResult::Exclude { .. }));
     }
 
     #[tokio::test]
     async fn passes_normal_text() {
-        let mut filter = HallucinationFilter::new();
+        let mut op = HallucinationOperator::new();
         let mut seg = make_segment("I roll for initiative");
-        let result = filter.on_segment(&mut seg).await;
-        assert!(matches!(result, FilterResult::Pass));
+        let result = op.on_segment(&mut seg).await;
+        assert!(matches!(result, OperatorResult::Pass));
     }
 
     #[tokio::test]
     async fn excludes_after_repeat_threshold() {
-        let mut filter = HallucinationFilter::new();
+        let mut op = HallucinationOperator::new();
         // Feed the same text 5 times (repeat_threshold)
         for _ in 0..5 {
             let mut seg = make_segment("Thank you for watching.");
-            filter.on_segment(&mut seg).await;
+            op.on_segment(&mut seg).await;
         }
         // The 5th one should trigger exclusion
         let mut seg = make_segment("Thank you for watching.");
-        let result = filter.on_segment(&mut seg).await;
-        assert!(matches!(result, FilterResult::Exclude { .. }));
+        let result = op.on_segment(&mut seg).await;
+        assert!(matches!(result, OperatorResult::Exclude { .. }));
     }
 }
