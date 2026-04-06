@@ -281,13 +281,17 @@ pub struct TranscriberConfig {
 }
 ```
 
-### 5. Filter Chain
+### 5. Operator Chain
 
-Pluggable via the `StreamFilter` trait. Crate ships two filters:
+Pluggable via the `Operator` trait. Crate ships four operators:
 
-**Hallucination Detection:** Frequency-based, no hardcoded phrase list. With RMS+VAD in place, this is a secondary defense. Also handles **cross-speaker deduplication** — when audio bleed causes the same text to appear on multiple speaker tracks at overlapping timestamps, the duplicate is excluded (uses CrosstalkEvents from the crosstalk detector to identify overlap windows).
+**Hallucination Filter:** Frequency-based, no hardcoded phrase list. With RMS+VAD in place, this is a secondary defense. Also handles cross-speaker deduplication.
 
 **Scene Chunker:** Assigns `chunk_group` to segments based on silence gaps and duration limits.
+
+**Scene Operator:** Optional LLM-backed scene boundary detection.
+
+**Beat Operator:** Groups segments into narrative beats with titles and summaries.
 
 ## Public API
 
@@ -295,7 +299,7 @@ Pluggable via the `StreamFilter` trait. Crate ships two filters:
 pub async fn process_session(
     config: &PipelineConfig,
     input: SessionInput,
-    filters: &mut [Box<dyn StreamFilter>],
+    operators: &mut [Box<dyn Operator>],
 ) -> Result<PipelineResult>
 ```
 
@@ -318,6 +322,8 @@ pub struct PipelineResult {
     pub segments_excluded: u32,
     pub scenes_detected: u32,
     pub duration_processed: f32,
+    pub beats: Vec<PipelineBeat>,
+    pub scenes: Vec<PipelineScene>,
 }
 ```
 
@@ -346,10 +352,12 @@ ovp-pipeline/
 │   │   └── mod.rs                  # Silero VAD v6 via ort (tier 2)
 │   ├── transcribe/
 │   │   └── mod.rs                  # Whisper HTTP endpoint client
-│   └── filters/
-│       ├── mod.rs                  # StreamFilter trait + apply_filters
+│   └── operators/
+│       ├── mod.rs                  # Operator trait + default_operators
 │       ├── hallucination.rs        # Frequency-based detection
-│       └── scene_chunker.rs        # Scene boundaries
+│       ├── scene_chunker.rs        # Silence-gap-based grouping
+│       ├── scene.rs                # LLM-backed scene boundaries (optional)
+│       └── beat.rs                 # Narrative beat grouping
 └── src/bin/
     └── cli.rs                      # TEST SCAFFOLD (not library API)
 ```
@@ -362,7 +370,7 @@ ovp-pipeline/
 | `serde` / `serde_json` | Serialization | no (core) |
 | `uuid` | Segment/session IDs | no (core) |
 | `tracing` | Structured logging | no (core) |
-| `async-trait` | StreamFilter trait | no (core) |
+| `async-trait` | Operator trait | no (core) |
 | `thiserror` | Error types | no (core) |
 | `ort` | ONNX Runtime for Silero VAD | `vad` feature |
 | `ndarray` | Tensor construction for ort | `vad` feature |
@@ -383,7 +391,7 @@ CLI-only deps (`cli` feature): `clap`, `symphonia-*`, `sha2`, `hex`, `chrono`, `
 
 5. **Stages are standalone functions.** Typed input → typed output. Independently testable.
 
-6. **Filters are pluggable.** `StreamFilter` trait. Consumers add custom filters without modifying the crate.
+6. **Operators are pluggable.** `Operator` trait. Consumers add custom operators without modifying the crate.
 
 7. **Errors propagate, don't panic.** `thiserror` + `?`.
 

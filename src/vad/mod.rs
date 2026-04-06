@@ -67,7 +67,16 @@ pub async fn detect_speech_from_segments(
             sample_rate: 16000,
         };
 
-        let regions = detect_speech_for_speaker(config, &speaker_samples)?;
+        // Run VAD inference on a blocking thread to avoid deadlocking
+        // the tokio executor. The ort crate's ONNX Runtime initialization
+        // spawns internal threads that contend with tokio's thread pool
+        // when called directly on an executor thread.
+        let vad_config = config.clone();
+        let regions = tokio::task::spawn_blocking(move || {
+            detect_speech_for_speaker(&vad_config, &speaker_samples)
+        })
+        .await
+        .map_err(|e| PipelineError::Vad(format!("spawn_blocking: {e}")))??;
 
         // Convert speech regions to AudioChunks, offsetting by segment start time
         for region in regions {
