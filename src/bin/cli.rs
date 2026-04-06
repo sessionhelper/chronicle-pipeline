@@ -107,7 +107,7 @@ fn parse_info_txt(path: &Path) -> CraigInfo {
     for line in content.lines() {
         let trimmed = line.trim();
         if trimmed.starts_with("Guild:") {
-            // "Guild:\t\tMy Campaign (557647168052264962)"
+            // "Guild:\t\tMy Campaign (000000000000000000)"
             let val = trimmed.trim_start_matches("Guild:").trim();
             if let Some(paren_start) = val.rfind('(') {
                 guild_name = val[..paren_start].trim().to_string();
