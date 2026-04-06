@@ -111,6 +111,8 @@ This keeps the graph sparse. Each stage subscribes to its direct input stream pl
 
 ### Event Buffers
 
+> **Status: Planned — not yet implemented.**
+
 Every event stream maintains a sequential buffer. Stages don't just see the current event — they can query backward into any stream they subscribe to:
 
 - **By time window:** "give me the last 30 seconds of events" — scene segmentation checks if a silence gap is a real break or a mid-scene pause
@@ -143,6 +145,8 @@ impl StreamBuffers {
 
 ### Correction History
 
+> **Status: Planned — not yet implemented.**
+
 Every correctable event (segments, entity links, scene boundaries) retains its full correction history as append-only layers. The original value is always preserved — corrections never overwrite, they stack.
 
 ```rust
@@ -159,6 +163,8 @@ struct CorrectionLayer {
 A segment's `text` is always the latest layer. `original_text` is always layer 0 (Whisper output). The full history is available for audit, undo, and training data generation (`original → corrected` pairs).
 
 ### Back-Propagation
+
+> **Status: Planned — not yet implemented.**
 
 When a later stage discovers something that affects earlier output, it emits a `CorrectionEvent` that flows backward through the pipeline. Stages that subscribe to correction events re-evaluate their earlier output against the event buffers.
 
@@ -188,6 +194,8 @@ Layer 3 can correct layers 2 and 1. Layer 2 can correct layer 1. No upward corre
 **Self-correction** is allowed: a stage can re-evaluate its own buffer when it receives new information. Example: lore reconciliation processes "the merchant" with no match, then later processes "You meet a woman named Elena" — it recognizes the introduction, creates a provisional entity, and re-scans its own buffer to link earlier "the merchant" references. This is internal re-evaluation, not a cross-layer correction, so no DAG violation.
 
 ### Deferred Corrections
+
+> **Status: Planned — not yet implemented.**
 
 Back-propagation is bounded by buffer depth. Corrections that target segments outside the buffer (e.g., a scene 8 reference to a character from scene 2) can't be applied immediately.
 
@@ -281,13 +289,17 @@ pub struct TranscriberConfig {
 }
 ```
 
-### 5. Filter Chain
+### 5. Operator Chain
 
-Pluggable via the `StreamFilter` trait. Crate ships two filters:
+Pluggable via the `Operator` trait. Crate ships four operators:
 
-**Hallucination Detection:** Frequency-based, no hardcoded phrase list. With RMS+VAD in place, this is a secondary defense. Also handles **cross-speaker deduplication** — when audio bleed causes the same text to appear on multiple speaker tracks at overlapping timestamps, the duplicate is excluded (uses CrosstalkEvents from the crosstalk detector to identify overlap windows).
+**Hallucination Filter:** Frequency-based, no hardcoded phrase list. With RMS+VAD in place, this is a secondary defense. Also handles cross-speaker deduplication.
 
 **Scene Chunker:** Assigns `chunk_group` to segments based on silence gaps and duration limits.
+
+**Scene Operator:** Optional LLM-backed scene boundary detection.
+
+**Beat Operator:** Groups segments into narrative beats with titles and summaries.
 
 ## Public API
 
@@ -295,7 +307,7 @@ Pluggable via the `StreamFilter` trait. Crate ships two filters:
 pub async fn process_session(
     config: &PipelineConfig,
     input: SessionInput,
-    filters: &mut [Box<dyn StreamFilter>],
+    operators: &mut [Box<dyn Operator>],
 ) -> Result<PipelineResult>
 ```
 
@@ -318,6 +330,8 @@ pub struct PipelineResult {
     pub segments_excluded: u32,
     pub scenes_detected: u32,
     pub duration_processed: f32,
+    pub beats: Vec<PipelineBeat>,
+    pub scenes: Vec<PipelineScene>,
 }
 ```
 
@@ -346,10 +360,12 @@ ovp-pipeline/
 │   │   └── mod.rs                  # Silero VAD v6 via ort (tier 2)
 │   ├── transcribe/
 │   │   └── mod.rs                  # Whisper HTTP endpoint client
-│   └── filters/
-│       ├── mod.rs                  # StreamFilter trait + apply_filters
+│   └── operators/
+│       ├── mod.rs                  # Operator trait + default_operators
 │       ├── hallucination.rs        # Frequency-based detection
-│       └── scene_chunker.rs        # Scene boundaries
+│       ├── scene_chunker.rs        # Silence-gap-based grouping
+│       ├── scene.rs                # LLM-backed scene boundaries (optional)
+│       └── beat.rs                 # Narrative beat grouping
 └── src/bin/
     └── cli.rs                      # TEST SCAFFOLD (not library API)
 ```
@@ -362,7 +378,7 @@ ovp-pipeline/
 | `serde` / `serde_json` | Serialization | no (core) |
 | `uuid` | Segment/session IDs | no (core) |
 | `tracing` | Structured logging | no (core) |
-| `async-trait` | StreamFilter trait | no (core) |
+| `async-trait` | Operator trait | no (core) |
 | `thiserror` | Error types | no (core) |
 | `ort` | ONNX Runtime for Silero VAD | `vad` feature |
 | `ndarray` | Tensor construction for ort | `vad` feature |
@@ -383,7 +399,7 @@ CLI-only deps (`cli` feature): `clap`, `symphonia-*`, `sha2`, `hex`, `chrono`, `
 
 5. **Stages are standalone functions.** Typed input → typed output. Independently testable.
 
-6. **Filters are pluggable.** `StreamFilter` trait. Consumers add custom filters without modifying the crate.
+6. **Operators are pluggable.** `Operator` trait. Consumers add custom operators without modifying the crate.
 
 7. **Errors propagate, don't panic.** `thiserror` + `?`.
 

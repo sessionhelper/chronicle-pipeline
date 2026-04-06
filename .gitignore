@@ -1,3 +1,7 @@
 /target
 models/
 test_data/
+
+.env
+.env.*
+!.env.example
