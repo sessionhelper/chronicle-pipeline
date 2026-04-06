@@ -111,6 +111,8 @@ This keeps the graph sparse. Each stage subscribes to its direct input stream pl
 
 ### Event Buffers
 
+> **Status: Planned — not yet implemented.**
+
 Every event stream maintains a sequential buffer. Stages don't just see the current event — they can query backward into any stream they subscribe to:
 
 - **By time window:** "give me the last 30 seconds of events" — scene segmentation checks if a silence gap is a real break or a mid-scene pause
@@ -143,6 +145,8 @@ impl StreamBuffers {
 
 ### Correction History
 
+> **Status: Planned — not yet implemented.**
+
 Every correctable event (segments, entity links, scene boundaries) retains its full correction history as append-only layers. The original value is always preserved — corrections never overwrite, they stack.
 
 ```rust
@@ -159,6 +163,8 @@ struct CorrectionLayer {
 A segment's `text` is always the latest layer. `original_text` is always layer 0 (Whisper output). The full history is available for audit, undo, and training data generation (`original → corrected` pairs).
 
 ### Back-Propagation
+
+> **Status: Planned — not yet implemented.**
 
 When a later stage discovers something that affects earlier output, it emits a `CorrectionEvent` that flows backward through the pipeline. Stages that subscribe to correction events re-evaluate their earlier output against the event buffers.
 
@@ -188,6 +194,8 @@ Layer 3 can correct layers 2 and 1. Layer 2 can correct layer 1. No upward corre
 **Self-correction** is allowed: a stage can re-evaluate its own buffer when it receives new information. Example: lore reconciliation processes "the merchant" with no match, then later processes "You meet a woman named Elena" — it recognizes the introduction, creates a provisional entity, and re-scans its own buffer to link earlier "the merchant" references. This is internal re-evaluation, not a cross-layer correction, so no DAG violation.
 
 ### Deferred Corrections
+
+> **Status: Planned — not yet implemented.**
 
 Back-propagation is bounded by buffer depth. Corrections that target segments outside the buffer (e.g., a scene 8 reference to a character from scene 2) can't be applied immediately.
 
