@@ -225,6 +225,7 @@ async fn transcribe_chunk(
                 confidence: Some(avg_logprob),
                 beat_id: None,
                 chunk_group: None,
+                talk_type: None,
                 excluded: false,
                 exclude_reason: None,
             })
