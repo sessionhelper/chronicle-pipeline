@@ -98,7 +98,7 @@ impl StreamingPipeline {
             speakers: HashMap::new(),
             segments: Vec::new(),
             next_segment_index: 0,
-            min_chunk_duration: 0.8,
+            min_chunk_duration: 1.5,
         }
     }
 
