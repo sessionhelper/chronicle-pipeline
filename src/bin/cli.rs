@@ -1,4 +1,4 @@
-//! CLI scaffold for testing the ovp-pipeline against real audio data.
+//! CLI scaffold for testing the chronicle-pipeline against real audio data.
 //!
 //! Two subcommands:
 //! - `ingest`: Convert Craig multi-track FLAC recordings to the raw PCM
@@ -21,14 +21,14 @@ use symphonia_core::meta::MetadataOptions;
 use symphonia_core::probe::Hint;
 use uuid::Uuid;
 
-use ovp_pipeline::{
+use chronicle_pipeline::{
     default_operators, operators_with_llm_scene, process_session, PipelineConfig, SessionInput, SpeakerTrack, TranscriberConfig,
     VadConfig,
 };
 
 /// Pipeline test scaffold for TTRPG audio transcription.
 #[derive(Parser)]
-#[command(name = "ovp-cli")]
+#[command(name = "chronicle-cli")]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -506,7 +506,7 @@ fn cmd_run(session_dir: &Path, whisper_url: &str, model: &str, vad_model: &Path,
     println!("  VAD model: {}", vad_model.display());
 
     let config = PipelineConfig {
-        rms: ovp_pipeline::ad::RmsConfig::default(),
+        rms: chronicle_pipeline::ad::RmsConfig::default(),
         vad: VadConfig {
             model_path: vad_model.to_path_buf(),
             ..VadConfig::default()
@@ -526,13 +526,13 @@ fn cmd_run(session_dir: &Path, whisper_url: &str, model: &str, vad_model: &Path,
 
     let mut operators = if let Some(llm_url) = scene_llm_url {
         println!("  Scene LLM: {} ({})", llm_url, scene_llm_model);
-        let beat_config = ovp_pipeline::operators::beat::BeatConfig {
+        let beat_config = chronicle_pipeline::operators::beat::BeatConfig {
             endpoint: llm_url.to_string(),
             model: scene_llm_model.to_string(),
             gm_speaker_id: gm_speaker.map(String::from),
             ..Default::default()
         };
-        let scene_config = ovp_pipeline::operators::scene::SceneConfig {
+        let scene_config = chronicle_pipeline::operators::scene::SceneConfig {
             endpoint: llm_url.to_string(),
             model: scene_llm_model.to_string(),
             gm_speaker_id: gm_speaker.map(String::from),

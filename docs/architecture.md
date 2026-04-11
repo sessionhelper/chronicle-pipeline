@@ -35,7 +35,7 @@ Everything about where audio comes from and where results go:
 - Session management
 - Transcript rendering (screenplay format, lane view, etc.)
 
-The CLI binary (`ovp-cli`, behind the `cli` feature) is a **test scaffold**, not part of the library API. It handles Craig FLAC conversion and file I/O for development purposes only.
+The CLI binary (`chronicle-cli`, behind the `cli` feature) is a **test scaffold**, not part of the library API. It handles Craig FLAC conversion and file I/O for development purposes only.
 
 ## Stage Graph
 
@@ -338,7 +338,7 @@ pub struct PipelineResult {
 ## Crate Structure
 
 ```
-ovp-pipeline/
+chronicle-pipeline/
 ├── Cargo.toml
 ├── models/
 │   └── silero_vad_v6.onnx         # ~1.2MB, gitignored

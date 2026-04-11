@@ -1,4 +1,4 @@
-# ovp-pipeline
+# chronicle-pipeline
 
 > Org-wide conventions (Rust style, git workflow, cross-service architecture) live in `/home/alex/sessionhelper-hub/CLAUDE.md`. Read that first for anything cross-cutting.
 

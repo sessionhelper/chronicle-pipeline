@@ -1,5 +1,5 @@
 [package]
-name = "ovp-pipeline"
+name = "chronicle-pipeline"
 version = "0.1.0"
 edition = "2021"
 
@@ -25,7 +25,7 @@ chrono = { version = "0.4", features = ["serde"], optional = true }
 regex = "1"
 
 [[bin]]
-name = "ovp-cli"
+name = "chronicle-cli"
 path = "src/bin/cli.rs"
 required-features = ["cli"]
 
