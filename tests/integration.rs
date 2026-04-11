@@ -10,9 +10,9 @@
 use std::fs;
 use std::path::Path;
 
-use ovp_pipeline::ad::{detect_audio, detect_audio_all, RmsConfig};
-use ovp_pipeline::vad::VadConfig;
-use ovp_pipeline::audio::resample;
+use chronicle_pipeline::ad::{detect_audio, detect_audio_all, RmsConfig};
+use chronicle_pipeline::vad::VadConfig;
+use chronicle_pipeline::audio::resample;
 
 const SCENE_DIR: &str = "test_data/scene_01";
 const VAD_MODEL: &str = "models/silero_vad_v6.onnx";
@@ -24,7 +24,7 @@ const SPEAKER_C: &str = "787a9547c27cd7f8";
 const SPEAKER_D: &str = "d0143e57ce524cdc";
 
 /// Load a speaker's PCM chunks from test_data, decode to mono f32.
-fn load_speaker(pseudo_id: &str) -> Option<ovp_pipeline::SpeakerTrack> {
+fn load_speaker(pseudo_id: &str) -> Option<chronicle_pipeline::SpeakerTrack> {
     let audio_dir = Path::new(SCENE_DIR).join("audio").join(pseudo_id);
     if !audio_dir.exists() {
         return None;
@@ -56,7 +56,7 @@ fn load_speaker(pseudo_id: &str) -> Option<ovp_pipeline::SpeakerTrack> {
         .map(|frame| (frame[0] + frame[1]) / 2.0)
         .collect();
 
-    Some(ovp_pipeline::SpeakerTrack {
+    Some(chronicle_pipeline::SpeakerTrack {
         pseudo_id: pseudo_id.into(),
         samples: mono,
         sample_rate: 48000,
@@ -64,7 +64,7 @@ fn load_speaker(pseudo_id: &str) -> Option<ovp_pipeline::SpeakerTrack> {
 }
 
 /// Load all 4 speakers, return None if test data isn't available.
-fn load_all_speakers() -> Option<Vec<ovp_pipeline::SpeakerTrack>> {
+fn load_all_speakers() -> Option<Vec<chronicle_pipeline::SpeakerTrack>> {
     let tracks: Vec<_> = [SPEAKER_A, GM, SPEAKER_C, SPEAKER_D]
         .iter()
         .filter_map(|id| load_speaker(id))
@@ -198,7 +198,7 @@ async fn vad_further_reduces_hot_mic() {
         model_path: VAD_MODEL.into(),
         ..VadConfig::default()
     };
-    let vad_chunks = ovp_pipeline::vad::detect_speech_from_segments(&vad_config, &rms_segments)
+    let vad_chunks = chronicle_pipeline::vad::detect_speech_from_segments(&vad_config, &rms_segments)
         .await
         .unwrap();
 
@@ -226,7 +226,7 @@ async fn vad_preserves_narrator_speech() {
         model_path: VAD_MODEL.into(),
         ..VadConfig::default()
     };
-    let vad_chunks = ovp_pipeline::vad::detect_speech_from_segments(&vad_config, &rms_segments)
+    let vad_chunks = chronicle_pipeline::vad::detect_speech_from_segments(&vad_config, &rms_segments)
         .await
         .unwrap();
 
@@ -254,7 +254,7 @@ async fn vad_chunks_have_valid_timestamps() {
         model_path: VAD_MODEL.into(),
         ..VadConfig::default()
     };
-    let chunks = ovp_pipeline::vad::detect_speech_from_segments(&vad_config, &all_segments)
+    let chunks = chronicle_pipeline::vad::detect_speech_from_segments(&vad_config, &all_segments)
         .await
         .unwrap();
 
@@ -291,13 +291,13 @@ async fn full_pipeline_scene_01() {
     let tracks = load_all_speakers().unwrap();
     let session_id = uuid::Uuid::new_v4();
 
-    let config = ovp_pipeline::PipelineConfig {
+    let config = chronicle_pipeline::PipelineConfig {
         rms: RmsConfig::default(),
         vad: VadConfig {
             model_path: VAD_MODEL.into(),
             ..VadConfig::default()
         },
-        whisper: ovp_pipeline::TranscriberConfig {
+        whisper: chronicle_pipeline::TranscriberConfig {
             endpoint: whisper_url,
             model: "deepdml/faster-whisper-large-v3-turbo-ct2".into(),
             language: Some("en".into()),
@@ -305,10 +305,10 @@ async fn full_pipeline_scene_01() {
         min_chunk_duration: 0.8,
     };
 
-    let input = ovp_pipeline::SessionInput { session_id, tracks };
-    let mut filters = ovp_pipeline::default_operators();
+    let input = chronicle_pipeline::SessionInput { session_id, tracks };
+    let mut filters = chronicle_pipeline::default_operators();
 
-    let result = ovp_pipeline::process_session(&config, input, &mut filters)
+    let result = chronicle_pipeline::process_session(&config, input, &mut filters)
         .await
         .unwrap();
 

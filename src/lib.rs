@@ -1,4 +1,4 @@
-//! ovp-pipeline: audio transcription pipeline for TTRPG voice sessions.
+//! chronicle-pipeline: audio transcription pipeline for TTRPG voice sessions.
 //!
 //! Pure audio processing library. Takes raw PCM audio bytes per speaker,
 //! runs VAD, sends audio to an external Whisper HTTP endpoint for

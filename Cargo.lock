@@ -185,6 +185,31 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "613afe47fcd5fac7ccf1db93babcb082c5994d996f20b8b159f2ad1658eb5724"
 
 [[package]]
+name = "chronicle-pipeline"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "clap",
+ "hex",
+ "ndarray 0.16.1",
+ "ort",
+ "regex",
+ "reqwest",
+ "rubato",
+ "serde",
+ "serde_json",
+ "sha2",
+ "symphonia-bundle-flac",
+ "symphonia-core",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
 name = "chrono"
 version = "0.4.44"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1049,31 +1074,6 @@ dependencies = [
  "hmac-sha256",
  "lzma-rust2",
  "ureq",
-]
-
-[[package]]
-name = "ovp-pipeline"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "chrono",
- "clap",
- "hex",
- "ndarray 0.16.1",
- "ort",
- "regex",
- "reqwest",
- "rubato",
- "serde",
- "serde_json",
- "sha2",
- "symphonia-bundle-flac",
- "symphonia-core",
- "thiserror",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "uuid",
 ]
 
 [[package]]
