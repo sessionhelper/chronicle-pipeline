@@ -1,150 +1,247 @@
-//! Core pipeline types.
+//! Pipeline public types.
 //!
-//! Data structures that flow between pipeline stages. Each stage takes
-//! typed input and returns typed output — no shared mutable state.
+//! Every type the caller constructs or receives lives here. Operators
+//! and the pipeline compose these; they never invent their own
+//! cross-stage types.
 
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 use uuid::Uuid;
 
-/// A single speaker's mono PCM audio stream.
+/// Session identifier. Opaque to the pipeline; the caller asserts meaning.
+pub type SessionId = Uuid;
+
+/// Speaker pseudonym. Opaque to the pipeline.
+pub type PseudoId = String;
+
+/// Wall-clock timestamp associated with an audio chunk's capture start.
+/// Microsecond precision is sufficient for synchronising across speakers.
+pub type Timestamp = i64;
+
+// ---------------------------------------------------------------------------
+// Inputs
+// ---------------------------------------------------------------------------
+
+/// A single chunk of per-speaker PCM audio arriving at the pipeline.
 ///
-/// The caller is responsible for byte decoding, stereo downmix, and
-/// any format conversion before constructing this. The pipeline
-/// receives mono f32 samples and a sample rate — nothing else.
-#[derive(Debug, Clone)]
-pub struct SpeakerTrack {
-    /// Opaque speaker identifier.
-    pub pseudo_id: String,
-    /// Mono f32 audio samples in [-1.0, 1.0] range.
-    pub samples: Vec<f32>,
-    /// Sample rate of these samples (e.g. 48000 from Discord).
-    pub sample_rate: u32,
-}
-
-/// Input to the pipeline: a session's worth of speaker tracks.
-#[derive(Debug, Clone)]
-pub struct SessionInput {
-    /// Unique session identifier.
-    pub session_id: Uuid,
-    /// Per-speaker mono PCM streams to process.
-    pub tracks: Vec<SpeakerTrack>,
-}
-
-/// A contiguous region of detected speech within a speaker's audio.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SpeechRegion {
-    /// Speaker who produced this speech.
-    pub speaker: String,
-    /// Start time in seconds (absolute within the session).
-    pub start: f32,
-    /// End time in seconds (absolute within the session).
-    pub end: f32,
-}
-
-/// An extracted audio chunk ready for transcription.
+/// The pipeline expects **48 kHz mono s16le** — the caller is responsible
+/// for stereo downmix and sample-rate conversion before constructing
+/// this. `seq` is the caller's monotonic per-speaker sequence number;
+/// the pipeline uses it only for tracing.
 #[derive(Debug, Clone)]
 pub struct AudioChunk {
-    /// Speaker who produced this audio.
-    pub speaker: String,
-    /// Mono f32 samples at 16kHz.
-    pub samples: Vec<f32>,
-    /// Sample rate (always 16000).
-    pub sample_rate: u32,
-    /// Absolute start time within the session, in seconds.
-    pub original_start: f32,
-    /// Absolute end time within the session, in seconds.
-    pub original_end: f32,
+    pub session_id: SessionId,
+    pub pseudo_id: PseudoId,
+    pub seq: u32,
+    pub capture_started_at: Timestamp,
+    pub duration_ms: u32,
+    pub pcm: Arc<[i16]>,
 }
 
-// SpeakerTrack is used throughout the pipeline where SpeakerSamples
-// was previously used. This alias keeps internal code readable.
-pub type SpeakerSamples = SpeakerTrack;
+impl AudioChunk {
+    pub const SAMPLE_RATE: u32 = 48_000;
 
-/// A single transcript segment produced by Whisper and processed by operators.
+    pub fn sample_count(&self) -> usize {
+        self.pcm.len()
+    }
+}
+
+/// A full session's audio, used in one-shot mode. Equivalent to a
+/// sequence of `AudioChunk`s per pseudo_id.
+#[derive(Debug, Clone)]
+pub struct SessionAudio {
+    pub session_id: SessionId,
+    pub tracks: Vec<SessionTrack>,
+}
+
+#[derive(Debug, Clone)]
+pub struct SessionTrack {
+    pub pseudo_id: PseudoId,
+    pub capture_started_at: Timestamp,
+    pub pcm: Arc<[i16]>,
+}
+
+// ---------------------------------------------------------------------------
+// Outputs
+// ---------------------------------------------------------------------------
+
+/// A canonical transcript segment.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TranscriptSegment {
-    /// Unique segment identifier.
+#[serde(rename_all = "snake_case")]
+pub struct Segment {
     pub id: Uuid,
-    /// Session this segment belongs to.
-    pub session_id: Uuid,
-    /// Ordering index within the session.
-    pub segment_index: u32,
-    /// Speaker who said this.
-    pub speaker_pseudo_id: String,
-    /// Absolute start time in seconds.
-    pub start_time: f32,
-    /// Absolute end time in seconds.
-    pub end_time: f32,
-    /// Text after operator processing. May differ from `original_text`.
+    pub session_id: SessionId,
+    pub pseudo_id: PseudoId,
+    pub start_ms: u64,
+    pub end_ms: u64,
     pub text: String,
-    /// Immutable Whisper output, preserved for audit/debugging.
-    pub original_text: String,
-    /// Whisper confidence score, if available.
-    pub confidence: Option<f32>,
-    /// Beat identifier assigned by the beat operator.
+    /// Immutable raw Whisper text captured at segment creation.
+    pub original: String,
+    pub confidence: f32,
     #[serde(default)]
-    pub beat_id: Option<u32>,
-    /// Scene/chunk group assigned by the scene operator.
-    pub chunk_group: Option<u32>,
-    /// Whether this is in-character roleplay or out-of-character table talk.
-    /// Set by the metatalk operator. Values: "ic" or "ooc".
+    pub language: Option<String>,
     #[serde(default)]
-    pub talk_type: Option<String>,
-    /// Whether this segment was excluded by an operator.
-    pub excluded: bool,
-    /// Reason for exclusion, if excluded.
-    pub exclude_reason: Option<String>,
+    pub flags: SegmentFlags,
 }
 
-/// A narrative beat detected by the BeatOperator.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PipelineBeat {
-    /// Beat index (0-based, sequential).
-    pub beat_index: u32,
-    /// Approximate start time in seconds.
-    pub start_time: f32,
-    /// End time in seconds. Set to start_time when no better estimate is available.
-    pub end_time: f32,
-    /// Short title for the beat.
-    pub title: String,
-    /// One-sentence summary.
-    pub summary: String,
+/// Per-segment flags. Additive — new flags tolerated by old consumers
+/// via `#[serde(default)]`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct SegmentFlags {
+    #[serde(default)]
+    pub meta_talk: Option<MetaTalkLabel>,
 }
 
-/// A scene grouping produced by the SceneOperator.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PipelineScene {
-    /// Scene index (0-based, sequential).
-    pub scene_index: u32,
-    /// Start time in seconds (from the earliest beat in this scene).
-    pub start_time: f32,
-    /// End time in seconds (from the latest beat in this scene).
-    pub end_time: f32,
-    /// Scene title.
-    pub title: String,
-    /// One-sentence summary.
-    pub summary: String,
-    /// First beat index included in this scene (inclusive).
-    pub beat_start: u32,
-    /// Last beat index included in this scene (inclusive).
-    pub beat_end: u32,
+/// Meta-talk classification.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MetaTalkLabel {
+    InCharacter,
+    OutOfCharacter,
+    Mixed,
+    Unclear,
 }
 
-/// Final output of the pipeline.
+/// A narrative beat.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PipelineResult {
-    /// All transcript segments (including excluded ones).
-    pub segments: Vec<TranscriptSegment>,
-    /// Narrative beats detected by the beat operator.
-    pub beats: Vec<PipelineBeat>,
-    /// Scene groupings produced by the scene operator.
-    pub scenes: Vec<PipelineScene>,
-    /// Number of segments that passed operators.
-    pub segments_produced: u32,
-    /// Number of segments excluded by operators.
-    pub segments_excluded: u32,
-    /// Number of scenes detected by the scene chunker.
-    pub scenes_detected: u32,
-    /// Total audio duration processed, in seconds.
-    pub duration_processed: f32,
+#[serde(rename_all = "snake_case")]
+pub struct Beat {
+    pub id: Uuid,
+    pub session_id: SessionId,
+    pub t_ms: u64,
+    pub kind: BeatKind,
+    pub label: String,
+    pub confidence: f32,
+}
+
+/// Closed, versioned beat kinds. `Unknown(String)` is the serde fallthrough
+/// so old consumers don't explode when new variants appear.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BeatKind {
+    CombatStart,
+    CombatEnd,
+    Discovery,
+    DialogueClimax,
+    SceneBreak,
+    #[serde(other)]
+    Unknown,
+}
+
+/// A coarse-grained scene groping multiple beats.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct Scene {
+    pub id: Uuid,
+    pub session_id: SessionId,
+    pub start_ms: u64,
+    pub end_ms: u64,
+    pub label: String,
+    pub confidence: f32,
+}
+
+/// A record representing a per-input failure in some operator.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct DroppedRecord {
+    pub source_operator: String,
+    pub reason: DropReason,
+    #[serde(default)]
+    pub details: serde_json::Value,
+}
+
+/// Closed enum for drop reasons. Add variants when new drop sources appear.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DropReason {
+    /// VAD-produced region was malformed or empty.
+    InvalidVadRegion,
+    /// Whisper exhausted retry budget for one region.
+    WhisperExhaustedRetries,
+    /// Whisper returned an empty / invalid transcription payload.
+    WhisperBadPayload,
+    /// Transcription matched a known hallucination heuristic.
+    Hallucination,
+    /// Too short / too noisy to keep.
+    NoiseFilter,
+    /// Catch-all for heuristic per-input rejections.
+    HeuristicReject,
+}
+
+/// Pipeline-level output. Returned from `emit()` (drainable) and from
+/// `finalize()` / `run_one_shot()` (complete).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct PipelineOutput {
+    pub segments: Vec<Segment>,
+    pub beats: Vec<Beat>,
+    pub scenes: Vec<Scene>,
+    pub dropped: Vec<DroppedRecord>,
+}
+
+impl PipelineOutput {
+    pub fn is_empty(&self) -> bool {
+        self.segments.is_empty()
+            && self.beats.is_empty()
+            && self.scenes.is_empty()
+            && self.dropped.is_empty()
+    }
+
+    pub fn extend(&mut self, other: PipelineOutput) {
+        self.segments.extend(other.segments);
+        self.beats.extend(other.beats);
+        self.scenes.extend(other.scenes);
+        self.dropped.extend(other.dropped);
+    }
+
+    /// Sort segments / beats / scenes by start time. Called once at
+    /// pipeline emit boundaries.
+    pub fn sort_in_place(&mut self) {
+        self.segments.sort_by_key(|s| s.start_ms);
+        self.beats.sort_by_key(|b| b.t_ms);
+        self.scenes.sort_by_key(|s| s.start_ms);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Inter-operator message types
+// ---------------------------------------------------------------------------
+
+/// A closed voice region emitted by the VAD operator.
+#[derive(Debug, Clone)]
+pub struct VoiceRegion {
+    pub session_id: SessionId,
+    pub pseudo_id: PseudoId,
+    pub start_ms: u64,
+    pub end_ms: u64,
+    /// Mono 16 kHz f32 audio covering the region, suitable for Whisper.
+    pub pcm: Arc<[f32]>,
+}
+
+/// A transcription result tied to a region.
+#[derive(Debug, Clone)]
+pub struct TranscribedRegion {
+    pub session_id: SessionId,
+    pub pseudo_id: PseudoId,
+    pub start_ms: u64,
+    pub end_ms: u64,
+    pub transcription: Transcription,
+}
+
+/// Whisper output. Callable-supplied via `WhisperClient`.
+#[derive(Debug, Clone)]
+pub struct Transcription {
+    pub text: String,
+    pub confidence: f32,
+    pub language: Option<String>,
+}
+
+/// A segment that has been filtered and is ready for downstream operators
+/// (meta-talk, beats, scenes). Wrapped so operators can distinguish
+/// "just-emitted" from later passes.
+#[derive(Debug, Clone)]
+pub enum DownstreamItem {
+    Segment(Segment),
+    Beat(Beat),
 }
