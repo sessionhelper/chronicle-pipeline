@@ -1,28 +1,55 @@
-//! chronicle-pipeline: audio transcription pipeline for TTRPG voice sessions.
+//! chronicle-pipeline: structured session understanding from per-speaker PCM.
 //!
-//! Pure audio processing library. Takes raw PCM audio bytes per speaker,
-//! runs VAD, sends audio to an external Whisper HTTP endpoint for
-//! transcription, applies operators (hallucination detection + scene
-//! chunking), and returns structured transcript segments.
+//! See `/home/alex/sessionhelper/sessionhelper-hub/docs/modules/chronicle-pipeline.md`
+//! for the authoritative module spec.
 //!
-//! **No I/O except HTTP to Whisper.** No S3, no Postgres, no file system.
-//! Caller provides audio bytes, crate returns objects.
+//! # Usage
+//!
+//! ```no_run
+//! use chronicle_pipeline::{
+//!     config::PipelineConfig, pipeline::Pipeline, whisper::WhisperClient,
+//!     types::Transcription, error::WhisperError,
+//! };
+//! use async_trait::async_trait;
+//! use std::sync::Arc;
+//!
+//! struct MyWhisper;
+//!
+//! #[async_trait]
+//! impl WhisperClient for MyWhisper {
+//!     async fn transcribe(&self, _audio: &[f32], _sr: u32)
+//!         -> Result<Transcription, WhisperError>
+//!     { unimplemented!() }
+//! }
+//!
+//! # async fn _demo() {
+//! let cfg = PipelineConfig::default();
+//! let pipeline = Pipeline::builder(cfg)
+//!     .whisper(Arc::new(MyWhisper))
+//!     .build()
+//!     .unwrap();
+//! // drive it with `ingest_chunk` / `emit` / `finalize`, or `run_one_shot`.
+//! # }
+//! ```
 
-pub mod ad;
-pub mod audio;
+pub mod config;
 pub mod error;
+pub mod operator;
 pub mod operators;
 pub mod pipeline;
-pub mod streaming;
-pub mod transcribe;
 pub mod types;
-pub mod vad;
+pub mod whisper;
 
-// Re-export the main public API at the crate root for convenience.
-pub use error::{PipelineError, Result};
-pub use operators::{default_operators, operators_with_llm_scene, OperatorResult, Operator};
-pub use pipeline::{process_session, PipelineConfig};
-pub use streaming::{StreamingConfig, StreamingPipeline};
-pub use transcribe::TranscriberConfig;
-pub use types::*;
-pub use vad::{VadConfig, VadSession};
+pub use config::{
+    BeatsConfig, FilterConfig, MetaTalkConfig, OperatorKind, PipelineConfig, ScenesConfig,
+    TranscriptionConfig, VadConfig,
+};
+pub use error::{PipelineError, Result, WhisperError};
+pub use operator::Operator;
+pub use pipeline::{Pipeline, PipelineBuilder};
+pub use types::{
+    AudioChunk, Beat, BeatKind, DropReason, DroppedRecord, MetaTalkLabel, PipelineOutput,
+    PseudoId, Scene, Segment, SegmentFlags, SessionAudio, SessionId, SessionTrack, Timestamp,
+    Transcription,
+};
+pub use whisper::{PipelineDeps, WhisperClient};
